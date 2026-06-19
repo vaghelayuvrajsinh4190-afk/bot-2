@@ -67,25 +67,28 @@ def build_roster_embed(group_doc, registrations, capacity):
             tn = reg.get("team_name", "Unknown")
             tn = (tn[:20] + '..') if len(tn) > 20 else tn
             captain = reg.get("owner_id", "")
-            table_lines.append(f" {num} │ ◆ {tn} │ <@{captain}>")
+            table_lines.append(f" {num} │ ✦ {tn:<20} │ <@{captain}>")
         else:
-            table_lines.append(f" {num} │ ◇ ── Open ──")
+            table_lines.append(f" {num} │ ▱ ── Open Slot ──")
 
-    header = f" ##  │ TEAM NAME\n {'─'*4}┼{'─'*30}"
+    header = f"  #  │ TEAM NAME\n ────┼───────────────────"
     tabular_data = header + "\n" + "\n".join(table_lines)
 
     embed = make_embed(
         f"🏆  {display_name}  ─  Live Roster",
-        f"> {status}  •  **{count}/{capacity}** slots filled\n"
-        f"> {bar}\n"
-        f"{Theme.SEP}\n\n"
-        f"**🎮 Match 1:** IDP `{m1_idp}` │ Start `{m1_start}` │ Map `{m1_map}`\n"
-        f"**🎮 Match 2:** IDP `{m2_idp}` │ Start `{m2_start}` │ Map `{m2_map}`\n\n"
-        f"{Theme.THIN_SEP}",
+        f"📡 **Status:** {status} │ **{count}/{capacity}** Slots Filled\n"
+        f"▓ **Roster Fill:** {bar}\n\n"
+        f"╭── 🎮 **Match Details** ──╮\n"
+        f"│  **Match 1:** `{m1_start}` │ IDP `{m1_idp}`\n"
+        f"│  📍 Map: `{m1_map}`\n"
+        f"│\n"
+        f"│  **Match 2:** `{m2_start}` │ IDP `{m2_idp}`\n"
+        f"│  📍 Map: `{m2_map}`\n"
+        f"╰──────────────────────────╯",
         color=color,
         footer="🔄 Auto-updates • Do not type here"
     )
-    embed.add_field(name="\u200b", value=f"```\n{tabular_data}\n```", inline=False)
+    embed.add_field(name="📋 **Registered Squads**", value=f"```\n{tabular_data}\n```", inline=False)
     return embed
 
 
@@ -118,19 +121,18 @@ def build_slot_availability_embed(groups, event_name="Scrims Qualifiers"):
         m2_start = m2.get("start", "TBD")
 
         lines.append(
-            f"**Group {gid}** │ {status}\n"
-            f"  {bar}  `{count}/{cap}`\n"
-            f"  ⏰ M1: `{m1_start}` │ M2: `{m2_start}`"
+            f"**✦ Group {gid}** ── {status}\n"
+            f"  {bar}  `{count}/{cap} filled`\n"
+            f"  ⏱ **Matchtimes:** `{m1_start}` │ `{m2_start}`"
         )
 
-    overall_bar = Theme.bar(total_filled, total_capacity, 20)
+    overall_bar = Theme.bar(total_filled, total_capacity, 18)
     groups_text = "\n\n".join(lines) if lines else "*No groups available yet.*"
 
     embed = make_embed(
         f"📋 {event_name} ─ Slot Availability",
-        f"{Theme.SEP}\n\n"
-        f"**Overall:** `{total_filled}/{total_capacity}` slots filled\n"
-        f"{overall_bar}\n\n"
+        f"📊 **Overall Stats:** `{total_filled}/{total_capacity}` slots claimed\n"
+        f"▓ **Total Fill:** {overall_bar}\n\n"
         f"{Theme.THIN_SEP}\n\n"
         f"{groups_text}\n\n"
         f"{Theme.SEP}",

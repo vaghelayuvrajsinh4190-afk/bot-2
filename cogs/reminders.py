@@ -66,7 +66,7 @@ class CancelSlotView(ui.View):
         self.event_id = event_id
         self.group_id = group_id
 
-    @ui.button(label="🚪 Cancel Slot", style=discord.ButtonStyle.danger, custom_id="cancel_slot_btn")
+    @ui.button(label="❌ Cancel Slot", style=discord.ButtonStyle.danger, custom_id="cancel_slot_btn")
     async def cancel_slot(self, interaction: discord.Interaction, button: ui.Button):
         owner_id = str(interaction.user.id)
         event_id = self.event_id or get_today_event_id()
@@ -153,7 +153,7 @@ class CancelSlotView(ui.View):
             ephemeral=True
         )
 
-    @ui.button(label="🔄 Change Schedule", style=discord.ButtonStyle.primary, custom_id="change_schedule_btn")
+    @ui.button(label="🔄 Change Schedule", style=discord.ButtonStyle.secondary, custom_id="change_schedule_btn")
     async def change_schedule(self, interaction: discord.Interaction, button: ui.Button):
         owner_id = str(interaction.user.id)
         event_id = self.event_id or get_today_event_id()

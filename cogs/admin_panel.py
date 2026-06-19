@@ -438,20 +438,16 @@ class AdminPanelCog(commands.Cog):
 
         embed = make_embed(
             "⚙️ Admin Control Panel",
-            f"{Theme.SEP}\n\n"
             f"╭── 📊 **Today's Overview** ──╮\n"
-            f"│\n"
             f"│  📅 **Event:** `{event_id}`\n"
             f"│  👥 **Groups:** `{len(all_groups)}`\n"
             f"│  📋 **Registrations:** `{total_regs}/{total_capacity}`\n"
             f"│  🔒 **Locked:** `{locked_count}/{len(all_groups)}`\n"
-            f"│  {Theme.bar(total_regs, total_capacity, 14)}\n"
-            f"│\n"
+            f"│  ▓ **Roster Fill:** {Theme.bar(total_regs, total_capacity, 14)}\n"
             f"╰────────────────────────────╯\n\n"
-            f"{Theme.THIN_SEP}\n\n"
-            f"Use the buttons below to manage today's scrims:\n\n{Theme.SEP}",
+            f"Use the buttons below to manage today's scrims.",
             Theme.PREMIUM,
-            f"Admin: {interaction.user.display_name}"
+            f"Admin: {interaction.user.display_name} │ Mack Bot 2027"
         )
         await interaction.response.send_message(embed=embed, view=AdminPanelView(), ephemeral=True)
 

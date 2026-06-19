@@ -31,31 +31,31 @@ DEFAULT_LOCK_MINUTES = 20  # lock cancel/reschedule this many min before match
 
 class Theme:
     """Centralized color palette and visual constants for embeds."""
-    SUCCESS   = discord.Color.from_rgb(87, 242, 135)
-    ERROR     = discord.Color.from_rgb(237, 66, 69)
-    WARNING   = discord.Color.from_rgb(254, 231, 92)
-    INFO      = discord.Color.from_rgb(88, 101, 242)
-    PREMIUM   = discord.Color.from_rgb(167, 139, 250)
-    ACCENT    = discord.Color.from_rgb(45, 136, 255)
-    DARK      = discord.Color.from_rgb(43, 45, 49)
-    TEAL      = discord.Color.from_rgb(30, 224, 188)
-    ORANGE    = discord.Color.from_rgb(250, 168, 26)
-    ROSE      = discord.Color.from_rgb(235, 69, 158)
-    GOLD      = discord.Color.from_rgb(255, 215, 0)
-    CRIMSON   = discord.Color.from_rgb(220, 20, 60)
+    SUCCESS   = discord.Color.from_rgb(46, 252, 103)  # electric neon green
+    ERROR     = discord.Color.from_rgb(255, 59, 48)   # electric red
+    WARNING   = discord.Color.from_rgb(255, 204, 0)   # electric gold
+    INFO      = discord.Color.from_rgb(0, 122, 255)   # electric blue
+    PREMIUM   = discord.Color.from_rgb(191, 90, 242)  # cyber purple
+    ACCENT    = discord.Color.from_rgb(0, 255, 213)   # cyan
+    DARK      = discord.Color.from_rgb(24, 25, 28)    # cyber dark
+    TEAL      = discord.Color.from_rgb(48, 209, 88)   # neon teal
+    ORANGE    = discord.Color.from_rgb(255, 159, 10)  # electric orange
+    ROSE      = discord.Color.from_rgb(255, 55, 127)  # electric rose
+    GOLD      = discord.Color.from_rgb(255, 215, 0)   # pure gold
+    CRIMSON   = discord.Color.from_rgb(255, 69, 58)   # crimson
 
     # Visual separators
-    SEP       = "▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬"
-    THIN_SEP  = "┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈"
-    FOOTER    = "⚡ Mack Bot Tortuga │ Powered by Precision"
-    BULLET    = "╰"
-    ARROW     = "➤"
+    SEP       = "✦ ─────────────────── ✦"
+    THIN_SEP  = "────────────────────────"
+    FOOTER    = "✦ Mack Bot Tortuga 🚀 2027 Edition"
+    BULLET    = "✦"
+    ARROW     = "›"
 
     @staticmethod
     def bar(current, maximum, length=12):
-        """Generate a progress bar string."""
+        """Generate a progress bar string using parallelograms."""
         filled = int((current / maximum) * length) if maximum else 0
-        return "`" + "█" * filled + "░" * (length - filled) + "`"
+        return "`" + "▰" * filled + "▱" * (length - filled) + "`"
 
     @staticmethod
     def group_color(count, mx):
@@ -70,10 +70,10 @@ class Theme:
     def group_status(count, mx):
         """Status text based on fill ratio."""
         r = count / mx if mx else 0
-        if r >= 1.0: return "🔴 FULL"
-        if r >= 0.75: return "🟠 Almost Full"
-        if r >= 0.4: return "🟡 Filling Up"
-        return "🟢 Open"
+        if r >= 1.0: return "⚡ FULL / LOCKED"
+        if r >= 0.75: return "▲ Almost Full"
+        if r >= 0.4: return "✦ Filling Up"
+        return "🟢 Active / Open"
 
 # ═══════════════════ RANK EMOJIS ═══════════════════
 
