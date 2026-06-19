@@ -552,7 +552,8 @@ class RegistrationCog(commands.Cog):
         """Slash command alternative to the button."""
         # Reuse the same logic as the button
         view = PersistentRegisterView()
-        await view.register_button.callback(view, interaction, None)
+        await view.register_button.callback(interaction)
+
 
     @app_commands.command(name="myteam", description="View your team info and today's registration")
     async def my_team(self, interaction: discord.Interaction):
