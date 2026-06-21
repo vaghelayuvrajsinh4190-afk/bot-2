@@ -1,13 +1,58 @@
 """
 Mack Bot Tortuga — Main Entry Point
-Bot class, event handlers, cog loading, and startup.
+Bot class, event handlers, cog loading, anti-crash system, and startup.
 """
 
+import sys
+import signal
+import asyncio
+import traceback
 import discord
 from discord.ext import commands
 from config import TOKEN, GUILD_ID, BOT_PREFIX
 from database import create_indexes
 import keep_alive
+
+
+# ═══════════════════ ANTI-CRASH SYSTEM ═══════════════════
+
+def setup_anti_crash():
+    """
+    Install global exception handlers so the bot never goes offline
+    due to an unhandled exception.
+    """
+
+    # Catch unhandled synchronous exceptions
+    def global_exception_handler(exc_type, exc_value, exc_traceback):
+        if issubclass(exc_type, KeyboardInterrupt):
+            sys.__excepthook__(exc_type, exc_value, exc_traceback)
+            return
+        print("=" * 60, flush=True)
+        print("🛡️ ANTI-CRASH: Unhandled exception caught!", flush=True)
+        print("".join(traceback.format_exception(exc_type, exc_value, exc_traceback)), flush=True)
+        print("=" * 60, flush=True)
+        print("Bot continues running...", flush=True)
+
+    sys.excepthook = global_exception_handler
+
+    # Catch unhandled async exceptions
+    def async_exception_handler(loop, context):
+        exception = context.get("exception")
+        message = context.get("message", "No message")
+        print("=" * 60, flush=True)
+        print("🛡️ ANTI-CRASH: Unhandled async exception!", flush=True)
+        print(f"Message: {message}", flush=True)
+        if exception:
+            print(f"Exception: {exception}", flush=True)
+            traceback.print_exception(type(exception), exception, exception.__traceback__)
+        print("=" * 60, flush=True)
+        print("Bot continues running...", flush=True)
+
+    try:
+        loop = asyncio.get_event_loop()
+        loop.set_exception_handler(async_exception_handler)
+    except RuntimeError:
+        pass  # No event loop yet, will be set when bot.run() starts
 
 
 # ═══════════════════ BOT CLASS ═══════════════════
@@ -27,6 +72,9 @@ class TortugaBot(commands.Bot):
         """Load all cogs and sync slash commands."""
         print("📦 Loading cogs...", flush=True)
 
+        # Install async exception handler on the running loop
+        self.loop.set_exception_handler(self._async_exception_handler)
+
         cog_list = [
             "cogs.registration",
             "cogs.provisioning",
@@ -43,6 +91,7 @@ class TortugaBot(commands.Bot):
                 print(f"  ✅ Loaded {cog}", flush=True)
             except Exception as e:
                 print(f"  ❌ Failed to load {cog}: {e}", flush=True)
+                traceback.print_exc()
 
         # Sync slash commands
         if GUILD_ID:
@@ -53,6 +102,18 @@ class TortugaBot(commands.Bot):
         else:
             await self.tree.sync()
             print("🔄 Synced slash commands globally", flush=True)
+
+    @staticmethod
+    def _async_exception_handler(loop, context):
+        """Handle unhandled async exceptions within the bot's event loop."""
+        exception = context.get("exception")
+        message = context.get("message", "No message")
+        print("=" * 60, flush=True)
+        print("🛡️ ANTI-CRASH: Unhandled async exception in bot loop!", flush=True)
+        print(f"Message: {message}", flush=True)
+        if exception:
+            print(f"Exception: {type(exception).__name__}: {exception}", flush=True)
+        print("=" * 60, flush=True)
 
 
 # ═══════════════════ EVENTS ═══════════════════
@@ -65,6 +126,7 @@ async def on_ready():
     print(f"✅ Logged in as {bot.user} (ID: {bot.user.id})", flush=True)
     print(f"📡 Connected to {len(bot.guilds)} guild(s)", flush=True)
     print(f"🚀 Mack Bot Tortuga is ready!", flush=True)
+    print(f"🛡️ Anti-crash system active.", flush=True)
 
 
 @bot.event
@@ -89,9 +151,51 @@ async def on_command_error(ctx, error):
         print(f"[ERROR] {error}", flush=True)
 
 
+@bot.tree.error
+async def on_app_command_error(interaction: discord.Interaction, error: discord.app_commands.AppCommandError):
+    """Global error handler for slash commands."""
+    from utils.embeds import error_embed
+
+    if isinstance(error, discord.app_commands.MissingPermissions):
+        try:
+            await interaction.response.send_message(
+                embed=error_embed("🔒 Access Denied", "You don't have permission to use this command."),
+                ephemeral=True
+            )
+        except discord.InteractionResponded:
+            pass
+    elif isinstance(error, discord.app_commands.CheckFailure):
+        try:
+            await interaction.response.send_message(
+                embed=error_embed("⛔ Check Failed", "You don't meet the requirements for this command."),
+                ephemeral=True
+            )
+        except discord.InteractionResponded:
+            pass
+    else:
+        print(f"[SLASH ERROR] {error}", flush=True)
+        traceback.print_exception(type(error), error, error.__traceback__)
+        try:
+            await interaction.response.send_message(
+                embed=error_embed("❌ Error", f"An unexpected error occurred.\n`{str(error)[:200]}`"),
+                ephemeral=True
+            )
+        except discord.InteractionResponded:
+            try:
+                await interaction.followup.send(
+                    embed=error_embed("❌ Error", f"An unexpected error occurred.\n`{str(error)[:200]}`"),
+                    ephemeral=True
+                )
+            except:
+                pass
+
+
 # ═══════════════════ STARTUP ═══════════════════
 
 if __name__ == "__main__":
+    # Install anti-crash handlers
+    setup_anti_crash()
+
     # Validate token
     if not TOKEN:
         print("❌ FATAL: TOKEN environment variable is not set!", flush=True)
@@ -106,10 +210,21 @@ if __name__ == "__main__":
     print("🌐 Starting web server...", flush=True)
     keep_alive.keep_alive()
 
-    # Connect to Discord
+    # Graceful shutdown handler
+    def graceful_shutdown(signum, frame):
+        print(f"\n🛑 Received signal {signum}, shutting down gracefully...", flush=True)
+        sys.exit(0)
+
+    signal.signal(signal.SIGINT, graceful_shutdown)
+    signal.signal(signal.SIGTERM, graceful_shutdown)
+
+    # Connect to Discord with auto-reconnect
     print("🚀 Connecting to Discord...", flush=True)
     try:
-        bot.run(TOKEN)
+        bot.run(TOKEN, reconnect=True)
+    except KeyboardInterrupt:
+        print("🛑 Bot stopped by user.", flush=True)
     except Exception as e:
         print(f"❌ FATAL: Bot crashed: {e}", flush=True)
+        traceback.print_exc()
         exit(1)

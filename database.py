@@ -54,8 +54,9 @@ def create_indexes():
     """Create all necessary indexes on startup."""
     print("📇 Creating database indexes...", flush=True)
 
-    # team_profiles: lookup by owner_id
+    # team_profiles: lookup by owner_id, TTL cleanup by expires_at
     team_profiles.create_index("owner_id", unique=True)
+    team_profiles.create_index("expires_at")
 
     # groups: lookup by event_id + group_id, find open groups
     groups.create_index([("event_id", ASCENDING), ("group_id", ASCENDING)], unique=True)

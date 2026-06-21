@@ -4,6 +4,7 @@ All environment variables, theme colors, and bot-wide settings.
 """
 
 import os
+import json
 import discord
 from dotenv import load_dotenv
 
@@ -23,9 +24,58 @@ TIMEZONE_OFFSET = 5.5  # IST = UTC+5:30
 
 # Default group settings (admin can override via /config)
 DEFAULT_GROUP_CAPACITY = 21
-DEFAULT_GROUP_COUNT = 10
+DEFAULT_GROUP_COUNT = 12  # Blueprint: 12 groups
 DEFAULT_REMINDER_LEAD_MINUTES = 30
 DEFAULT_LOCK_MINUTES = 20  # lock cancel/reschedule this many min before match
+
+# Registration timing (IST)
+REGISTRATION_OPEN_HOUR = 10   # 10:00 AM IST
+REGISTRATION_OPEN_MINUTE = 0
+
+# Team profile expiry
+PROFILE_EXPIRY_DAYS = 30  # 30-day memory for team profiles
+
+# ═══════════════════ SCHEDULE LOADER ═══════════════════
+
+SCHEDULE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "schedule.json")
+
+
+def load_schedule():
+    """Load the daily schedule from schedule.json."""
+    try:
+        with open(SCHEDULE_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data.get("groups", [])
+    except FileNotFoundError:
+        print("⚠️ schedule.json not found, using empty schedule.", flush=True)
+        return []
+    except json.JSONDecodeError as e:
+        print(f"⚠️ schedule.json parse error: {e}", flush=True)
+        return []
+
+
+def save_schedule(groups_data):
+    """Save updated schedule data back to schedule.json."""
+    try:
+        with open(SCHEDULE_FILE, "w", encoding="utf-8") as f:
+            json.dump({"groups": groups_data}, f, indent=4, ensure_ascii=False)
+        return True
+    except Exception as e:
+        print(f"❌ Failed to save schedule.json: {e}", flush=True)
+        return False
+
+
+def get_schedule_for_group(group_number: int):
+    """
+    Get the schedule entry for a specific group number (1-based).
+    Returns dict with match1/match2 or None if not found.
+    """
+    schedule = load_schedule()
+    for entry in schedule:
+        if entry.get("group_number") == group_number:
+            return entry
+    return None
+
 
 # ═══════════════════ DESIGN SYSTEM ═══════════════════
 
@@ -56,6 +106,12 @@ class Theme:
         """Generate a progress bar string using parallelograms."""
         filled = int((current / maximum) * length) if maximum else 0
         return "`" + "▰" * filled + "▱" * (length - filled) + "`"
+
+    @staticmethod
+    def slot_bar(current, maximum, length=10):
+        """Generate a progress bar using circle style (blueprint style)."""
+        filled = int((current / maximum) * length) if maximum else 0
+        return "●" * filled + "○" * (length - filled)
 
     @staticmethod
     def group_color(count, mx):

@@ -1,24 +1,35 @@
 """
 Mack Bot Tortuga — Provisioning Cog
-Handles daily batch group creation (Phase 3a) and nightly cleanup (Phase 3b).
+Handles the full autopilot system:
+  - Midnight Reset: cleanup, board reset, lock registration, auto-provision
+  - Registration Open: 10 AM IST unlock
+  - Manual /provision, /addgroups, /deprovision, /set_groups, /update_time
 """
 
 import datetime
 import asyncio
+import json
 import discord
 from discord.ext import commands, tasks
 from discord import app_commands
 
 from config import (
     Theme, TIMEZONE_OFFSET,
-    DEFAULT_GROUP_CAPACITY, DEFAULT_GROUP_COUNT
+    DEFAULT_GROUP_CAPACITY, DEFAULT_GROUP_COUNT,
+    REGISTRATION_OPEN_HOUR, REGISTRATION_OPEN_MINUTE,
+    load_schedule, save_schedule, get_schedule_for_group
 )
-from utils.embeds import make_embed, error_embed, success_embed, build_slot_availability_embed
+from utils.embeds import (
+    make_embed, error_embed, success_embed,
+    build_slot_availability_embed, build_registration_board_embed,
+    build_group_control_panel_embed
+)
 from utils.permissions import (
     get_or_create_role, create_group_channel,
     create_day_category, cleanup_channel, cleanup_role, cleanup_category
 )
 from models import group as group_model, punishment
+from models import team_profile
 from database import get_config, set_config, get_channel_config
 
 
@@ -44,33 +55,318 @@ def generate_group_id(index: int, event_id: str):
 # ═══════════════════ PROVISIONING COG ═══════════════════
 
 class ProvisioningCog(commands.Cog):
-    """Handles daily group provisioning and nightly cleanup."""
+    """Handles daily group provisioning, autopilot, and nightly cleanup."""
 
     def __init__(self, bot):
         self.bot = bot
 
     async def cog_load(self):
         """Start background tasks."""
-        self.midnight_cleanup.start()
+        self.autopilot_loop.start()
 
     async def cog_unload(self):
-        self.midnight_cleanup.cancel()
+        self.autopilot_loop.cancel()
 
-    # ─────────────── PROVISION COMMAND ───────────────
+    # ═══════════════════ AUTOPILOT LOOP ═══════════════════
+
+    @tasks.loop(minutes=1)
+    async def autopilot_loop(self):
+        """
+        Master autopilot loop — checks every minute for:
+        1. Midnight Reset (00:00 IST)
+        2. Registration Open (10:00 AM IST)
+        """
+        utc_now = datetime.datetime.utcnow()
+        local_now = utc_now + datetime.timedelta(hours=TIMEZONE_OFFSET)
+
+        if not self.bot.guilds:
+            return
+
+        guild = self.bot.guilds[0]
+
+        # ─────── MIDNIGHT RESET (00:00 IST) ───────
+        if local_now.hour == 0 and local_now.minute == 0:
+            await self._midnight_reset(guild, local_now)
+
+        # ─────── REGISTRATION OPEN (10:00 AM IST) ───────
+        if local_now.hour == REGISTRATION_OPEN_HOUR and local_now.minute == REGISTRATION_OPEN_MINUTE:
+            await self._registration_open(guild)
+
+    @autopilot_loop.before_loop
+    async def before_autopilot(self):
+        await self.bot.wait_until_ready()
+
+    # ═══════════════════ MIDNIGHT RESET ═══════════════════
+
+    async def _midnight_reset(self, guild, local_now):
+        """
+        Full midnight reset cycle:
+        1. Delete yesterday's group channels
+        2. Hard data wipe (clear daily registrations)
+        3. Reset permanent registration board to 0/21
+        4. Lock registration button
+        5. Create fresh group channels for new day
+        6. Deploy control panels
+        """
+        print("🕛 MIDNIGHT RESET: Starting full reset cycle...", flush=True)
+
+        # Get yesterday's event ID
+        yesterday = (local_now - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
+        yesterday_groups = group_model.get_all_groups(yesterday, include_archived=True)
+
+        # ── Step 1: Channel Cleanup ──
+        if yesterday_groups:
+            await self._cleanup_event(guild, yesterday, yesterday_groups)
+            print(f"🧹 Cleaned up {len(yesterday_groups)} groups from {yesterday}", flush=True)
+
+        # ── Step 2: Clean expired data ──
+        expired_bans = punishment.cleanup_expired_bans()
+        expired_profiles = team_profile.cleanup_expired_profiles()
+        if expired_bans:
+            print(f"🧹 Expired {expired_bans} bans", flush=True)
+        if expired_profiles:
+            print(f"🧹 Expired {expired_profiles} team profiles (30-day TTL)", flush=True)
+
+        # ── Step 3: Reset Permanent Registration Board ──
+        await self._reset_registration_board(guild)
+        print("📋 Registration board reset to 0/0", flush=True)
+
+        # ── Step 4: Lock Registration ──
+        await self._lock_registration(guild)
+        print("🔒 Registration locked", flush=True)
+
+        # ── Step 5: Auto-Provision New Day ──
+        event_id = get_today_event_id()
+        count = int(get_config("default_group_count", DEFAULT_GROUP_COUNT))
+        cap = int(get_config("default_group_capacity", DEFAULT_GROUP_CAPACITY))
+        await self._auto_provision(guild, event_id, count, cap)
+        print(f"📦 Auto-provisioned {count} groups for {event_id}", flush=True)
+
+        # ── Log to admin channel ──
+        log_channel_id = get_channel_config("admin_log")
+        if log_channel_id:
+            log_ch = guild.get_channel(log_channel_id)
+            if log_ch:
+                await log_ch.send(
+                    embed=make_embed(
+                        "🕛 Midnight Reset Complete",
+                        f"{Theme.SEP}\n\n"
+                        f"**Yesterday cleaned:** `{len(yesterday_groups)}` groups\n"
+                        f"**Bans expired:** `{expired_bans}`\n"
+                        f"**Profiles expired:** `{expired_profiles}`\n"
+                        f"**New groups created:** `{count}`\n"
+                        f"**Registration:** 🔒 Locked\n\n{Theme.SEP}",
+                        Theme.SUCCESS
+                    )
+                )
+
+        print("✅ Midnight reset complete.", flush=True)
+
+    # ═══════════════════ REGISTRATION OPEN ═══════════════════
+
+    async def _registration_open(self, guild):
+        """Unlock registration at the configured time (default 10:00 AM IST)."""
+        print(f"🕙 REGISTRATION OPEN: Unlocking registration...", flush=True)
+
+        await self._unlock_registration(guild)
+
+        log_channel_id = get_channel_config("admin_log")
+        if log_channel_id:
+            log_ch = guild.get_channel(log_channel_id)
+            if log_ch:
+                await log_ch.send(
+                    embed=make_embed(
+                        "🔓 Registration Open",
+                        f"{Theme.SEP}\n\n"
+                        f"📥 **Registration is now OPEN!**\n"
+                        f"Players can now register for today's scrims.\n\n{Theme.SEP}",
+                        Theme.SUCCESS
+                    )
+                )
+
+        print("✅ Registration unlocked.", flush=True)
+
+    # ═══════════════════ BOARD & BUTTON MANAGEMENT ═══════════════════
+
+    async def _reset_registration_board(self, guild):
+        """Reset the permanent registration board embed to 0/0 (empty)."""
+        reg_channel_id = get_channel_config("register")
+        if not reg_channel_id:
+            return
+
+        channel = guild.get_channel(reg_channel_id)
+        if not channel:
+            return
+
+        slot_msg_id = get_config("slot_message_id")
+        if not slot_msg_id:
+            return
+
+        try:
+            msg = await channel.fetch_message(slot_msg_id)
+            empty_embed = build_registration_board_embed(groups=None)
+            await msg.edit(embed=empty_embed)
+        except discord.NotFound:
+            print("⚠️ Slot board message not found, will recreate on provision.", flush=True)
+        except Exception as e:
+            print(f"⚠️ Failed to reset board: {e}", flush=True)
+
+    async def _lock_registration(self, guild):
+        """Change the register button to disabled 🔒 Registration Closed."""
+        reg_channel_id = get_channel_config("register")
+        if not reg_channel_id:
+            return
+
+        channel = guild.get_channel(reg_channel_id)
+        if not channel:
+            return
+
+        slot_msg_id = get_config("slot_message_id")
+        if not slot_msg_id:
+            return
+
+        try:
+            msg = await channel.fetch_message(slot_msg_id)
+            from cogs.registration import PersistentRegisterView
+            locked_view = PersistentRegisterView(locked=True)
+            await msg.edit(view=locked_view)
+        except discord.NotFound:
+            pass
+        except Exception as e:
+            print(f"⚠️ Failed to lock registration: {e}", flush=True)
+
+    async def _unlock_registration(self, guild):
+        """Change the register button back to active 📥 Register Team."""
+        reg_channel_id = get_channel_config("register")
+        if not reg_channel_id:
+            return
+
+        channel = guild.get_channel(reg_channel_id)
+        if not channel:
+            return
+
+        slot_msg_id = get_config("slot_message_id")
+        if not slot_msg_id:
+            return
+
+        try:
+            msg = await channel.fetch_message(slot_msg_id)
+
+            # Also refresh the board embed with current groups
+            event_id = get_today_event_id()
+            all_groups = group_model.get_all_groups(event_id)
+            embed = build_registration_board_embed(all_groups)
+
+            from cogs.registration import PersistentRegisterView
+            unlocked_view = PersistentRegisterView(locked=False)
+            await msg.edit(embed=embed, view=unlocked_view)
+        except discord.NotFound:
+            pass
+        except Exception as e:
+            print(f"⚠️ Failed to unlock registration: {e}", flush=True)
+
+    # ═══════════════════ AUTO-PROVISION ═══════════════════
+
+    async def _auto_provision(self, guild, event_id, count, capacity):
+        """Automatically create groups, channels, roles using schedule.json."""
+        schedule = load_schedule()
+        day_display = get_today_display()
+        category_name = f"📋 SCRIMS — {day_display}"
+
+        # Create category
+        category = await create_day_category(guild, category_name)
+        if not category:
+            print("❌ Failed to create day category.", flush=True)
+            return
+
+        set_config(f"category_{event_id}", category.id)
+
+        created_groups = []
+        for i in range(1, count + 1):
+            group_id = generate_group_id(i, event_id)
+
+            # Get schedule for this group number
+            sched = None
+            for s in schedule:
+                if s.get("group_number") == i:
+                    sched = s
+                    break
+
+            if sched:
+                match1 = sched.get("match1", {"idp": "TBD", "start": "TBD", "map": "TBD"})
+                match2 = sched.get("match2", {"idp": "TBD", "start": "TBD", "map": "TBD"})
+                shift = sched.get("shift", "")
+            else:
+                match1 = {"idp": "TBD", "start": "TBD", "map": "TBD"}
+                match2 = {"idp": "TBD", "start": "TBD", "map": "TBD"}
+                shift = ""
+
+            # Create role
+            role = await get_or_create_role(guild, group_id, discord.Color.blue())
+            if not role:
+                continue
+
+            # Create channel
+            channel_name = f"group-{i}"
+            channel = await create_group_channel(guild, category, channel_name, role)
+            if not channel:
+                continue
+
+            # Insert group doc
+            group_doc = group_model.create_group(
+                event_id=event_id,
+                group_id=group_id,
+                capacity=capacity,
+                match1=match1,
+                match2=match2,
+                channel_id=channel.id,
+                role_id=role.id,
+                category_id=category.id
+            )
+            created_groups.append(group_doc)
+
+            # Post initial roster embed in the group channel
+            from models import registration as reg_model
+            regs = reg_model.get_group_registrations(group_id, event_id)
+            roster_embed = build_roster_embed(group_doc, regs, capacity)
+            msg = await channel.send(embed=roster_embed)
+            group_model.update_roster_message(event_id, group_id, msg.id)
+
+            # Deploy Group Control Panel
+            from cogs.admin_panel import GroupControlPanelView
+            panel_embed = build_group_control_panel_embed(group_doc)
+            await channel.send(embed=panel_embed, view=GroupControlPanelView(event_id, group_id))
+
+            # Rate limit safety
+            await asyncio.sleep(0.5)
+
+        # Update the registration board with new groups
+        reg_channel_id = get_channel_config("register")
+        if reg_channel_id:
+            reg_channel = guild.get_channel(reg_channel_id)
+            if reg_channel:
+                slot_msg_id = get_config("slot_message_id")
+                if slot_msg_id:
+                    try:
+                        all_groups = group_model.get_all_groups(event_id)
+                        embed = build_registration_board_embed(all_groups)
+                        msg = await reg_channel.fetch_message(slot_msg_id)
+                        await msg.edit(embed=embed)
+                    except discord.NotFound:
+                        pass
+
+        return created_groups
+
+    # ═══════════════════ MANUAL PROVISION COMMAND ═══════════════════
 
     @app_commands.command(
         name="provision",
         description="[Admin] Create today's groups, channels, and roles"
     )
     @app_commands.describe(
-        group_count="Number of groups to create (default: from config or 10)",
+        group_count="Number of groups to create (default: from config or 12)",
         capacity="Max teams per group (default: from config or 21)",
-        event_name="Display name for the event (default: Scrims Qualifiers)",
-        match1_start="Match 1 start time (e.g. 2:00 PM)",
-        match2_start="Match 2 start time (e.g. 2:30 PM)",
-        match1_map="Map for match 1 (default: TBD)",
-        match2_map="Map for match 2 (default: TBD)",
-        stagger_minutes="Minutes between each group's start time (default: 30)"
+        event_name="Display name for the event (default: Scrims Qualifiers)"
     )
     @app_commands.checks.has_permissions(administrator=True)
     async def provision(
@@ -78,15 +374,10 @@ class ProvisioningCog(commands.Cog):
         interaction: discord.Interaction,
         group_count: int = None,
         capacity: int = None,
-        event_name: str = "Scrims Qualifiers",
-        match1_start: str = "2:00 PM",
-        match2_start: str = "2:30 PM",
-        match1_map: str = "TBD",
-        match2_map: str = "TBD",
-        stagger_minutes: int = 30
+        event_name: str = "Scrims Qualifiers"
     ):
         event_id = get_today_event_id()
-        
+
         # Check if already provisioned
         existing = group_model.get_all_groups(event_id)
         if existing:
@@ -103,101 +394,26 @@ class ProvisioningCog(commands.Cog):
             )
             return
 
-        # Use config or defaults
         count = group_count or int(get_config("default_group_count", DEFAULT_GROUP_COUNT))
         cap = capacity or int(get_config("default_group_capacity", DEFAULT_GROUP_CAPACITY))
 
         await interaction.response.defer()
 
-        guild = interaction.guild
-        day_display = get_today_display()
-        category_name = f"📋 {event_name.upper()} — {day_display}"
+        created = await self._auto_provision(interaction.guild, event_id, count, cap)
 
-        # Create category
-        category = await create_day_category(guild, category_name)
-        if not category:
-            await interaction.followup.send(
-                embed=error_embed("❌ Failed", "Could not create the day's category. Check bot permissions.")
-            )
-            return
-
-        # Store category ID
-        set_config(f"category_{event_id}", category.id)
-
-        created_groups = []
-        for i in range(1, count + 1):
-            group_id = generate_group_id(i, event_id)
-
-            # Create role
-            role = await get_or_create_role(guild, group_id, discord.Color.blue())
-            if not role:
-                continue
-
-            # Create channel
-            channel_name = f"group-{group_id.lower()}"
-            channel = await create_group_channel(guild, category, channel_name, role)
-            if not channel:
-                continue
-
-            # Compute match times (stagger by index)
-            # For now, store as formatted strings; admin can edit via /panel
-            m1_time = f"{match1_start} (+{(i-1)*stagger_minutes}m)" if i > 1 else match1_start
-            m2_time = f"{match2_start} (+{(i-1)*stagger_minutes}m)" if i > 1 else match2_start
-
-            match1 = {"idp": m1_time, "start": m1_time, "map": match1_map}
-            match2 = {"idp": m2_time, "start": m2_time, "map": match2_map}
-
-            # Insert group doc
-            group_doc = group_model.create_group(
-                event_id=event_id,
-                group_id=group_id,
-                capacity=cap,
-                match1=match1,
-                match2=match2,
-                channel_id=channel.id,
-                role_id=role.id,
-                category_id=category.id
-            )
-            created_groups.append(group_doc)
-
-            # Post initial roster embed in the group channel
-            from models import registration as reg_model
-            regs = reg_model.get_group_registrations(group_id, event_id)
-            from utils.embeds import build_roster_embed
-            roster_embed = build_roster_embed(group_doc, regs, cap)
-            msg = await channel.send(embed=roster_embed)
-            group_model.update_roster_message(event_id, group_id, msg.id)
-
-            # Rate limit safety
-            await asyncio.sleep(0.5)
-
-        # Post slot availability embed in register channel
-        reg_channel_id = get_channel_config("register")
-        if reg_channel_id:
-            reg_channel = guild.get_channel(reg_channel_id)
-            if reg_channel:
-                all_groups = group_model.get_all_groups(event_id)
-                avail_embed = build_slot_availability_embed(all_groups, event_name)
-                
-                # Also post the register button
-                from cogs.registration import PersistentRegisterView
-                avail_msg = await reg_channel.send(embed=avail_embed, view=PersistentRegisterView())
-                set_config(f"slot_availability_msg_{event_id}", avail_msg.id)
-
-        # Success response
         embed = make_embed(
             "✅ Provisioning Complete!",
             f"{Theme.SEP}\n\n"
             f"╭── 📋 **Setup Summary** ──╮\n"
             f"│\n"
             f"│  📅 **Event:** `{event_id}`\n"
-            f"│  📁 **Category:** `{category_name}`\n"
-            f"│  👥 **Groups:** `{len(created_groups)}`\n"
+            f"│  👥 **Groups:** `{len(created)}`\n"
             f"│  🏟️ **Capacity:** `{cap}` per group\n"
-            f"│  🎮 **Total Slots:** `{cap * len(created_groups)}`\n"
+            f"│  🎮 **Total Slots:** `{cap * len(created)}`\n"
+            f"│  📋 **Schedule:** Using `schedule.json`\n"
             f"│\n"
             f"╰────────────────────────────╯\n\n"
-            f"Created: {len(created_groups)} channels, {len(created_groups)} roles\n\n{Theme.SEP}",
+            f"Created: {len(created)} channels, {len(created)} roles\n\n{Theme.SEP}",
             Theme.SUCCESS,
             f"Provisioned by {interaction.user.display_name}"
         )
@@ -217,7 +433,7 @@ class ProvisioningCog(commands.Cog):
     async def add_groups(self, interaction: discord.Interaction, count: int = 1, capacity: int = None):
         event_id = get_today_event_id()
         existing = group_model.get_all_groups(event_id)
-        
+
         if not existing:
             await interaction.response.send_message(
                 embed=error_embed("❌ Not Provisioned", "Run `/provision` first to set up today's groups."),
@@ -240,6 +456,7 @@ class ProvisioningCog(commands.Cog):
 
         start_index = len(existing) + 1
         created = []
+        schedule = load_schedule()
 
         for i in range(start_index, start_index + count):
             group_id = generate_group_id(i, event_id)
@@ -247,12 +464,23 @@ class ProvisioningCog(commands.Cog):
             if not role:
                 continue
 
-            channel = await create_group_channel(guild, category, f"group-{group_id.lower()}", role)
+            channel = await create_group_channel(guild, category, f"group-{i}", role)
             if not channel:
                 continue
 
-            match1 = {"idp": "TBD", "start": "TBD", "map": "TBD"}
-            match2 = {"idp": "TBD", "start": "TBD", "map": "TBD"}
+            # Try to get schedule for this group number
+            sched = None
+            for s in schedule:
+                if s.get("group_number") == i:
+                    sched = s
+                    break
+
+            if sched:
+                match1 = sched.get("match1", {"idp": "TBD", "start": "TBD", "map": "TBD"})
+                match2 = sched.get("match2", {"idp": "TBD", "start": "TBD", "map": "TBD"})
+            else:
+                match1 = {"idp": "TBD", "start": "TBD", "map": "TBD"}
+                match2 = {"idp": "TBD", "start": "TBD", "map": "TBD"}
 
             group_doc = group_model.create_group(
                 event_id, group_id, cap, match1, match2,
@@ -265,6 +493,12 @@ class ProvisioningCog(commands.Cog):
             regs = reg_model.get_group_registrations(group_id, event_id)
             msg = await channel.send(embed=build_roster_embed(group_doc, regs, cap))
             group_model.update_roster_message(event_id, group_id, msg.id)
+
+            # Deploy control panel
+            from cogs.admin_panel import GroupControlPanelView
+            panel_embed = build_group_control_panel_embed(group_doc)
+            await channel.send(embed=panel_embed, view=GroupControlPanelView(event_id, group_id))
+
             await asyncio.sleep(0.5)
 
         # Refresh availability embed
@@ -287,7 +521,7 @@ class ProvisioningCog(commands.Cog):
     async def deprovision(self, interaction: discord.Interaction):
         event_id = get_today_event_id()
         existing = group_model.get_all_groups(event_id, include_archived=True)
-        
+
         if not existing:
             await interaction.response.send_message(
                 embed=error_embed("❌ Nothing to Remove", "No groups exist for today."),
@@ -306,53 +540,119 @@ class ProvisioningCog(commands.Cog):
             )
         )
 
-    # ─────────────── NIGHTLY CLEANUP TASK ───────────────
+    # ─────────────── /set_groups COMMAND ───────────────
 
-    @tasks.loop(minutes=1)
-    async def midnight_cleanup(self):
-        utc_now = datetime.datetime.utcnow()
-        local_now = utc_now + datetime.timedelta(hours=TIMEZONE_OFFSET)
+    @app_commands.command(
+        name="set_groups",
+        description="[Admin] Set how many groups the bot generates tonight"
+    )
+    @app_commands.describe(amount="Number of groups (e.g. 10)")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def set_groups(self, interaction: discord.Interaction, amount: int):
+        if amount < 1 or amount > 50:
+            await interaction.response.send_message(
+                embed=error_embed("❌ Invalid", "Amount must be between 1 and 50."),
+                ephemeral=True
+            )
+            return
 
-        if local_now.hour == 0 and local_now.minute == 0:
-            print("🕛 MIDNIGHT CLEANUP: Starting nightly cleanup...", flush=True)
-            if not self.bot.guilds:
-                return
+        set_config("default_group_count", amount)
+        await interaction.response.send_message(
+            embed=success_embed(
+                "✅ Group Count Updated",
+                f"{Theme.SEP}\n\n"
+                f"Tonight's midnight reset will create **{amount}** groups.\n\n{Theme.SEP}"
+            ),
+            ephemeral=True
+        )
 
-            guild = self.bot.guilds[0]
+    # ─────────────── /update_time COMMAND ───────────────
 
-            # Get yesterday's event ID
-            yesterday = (local_now - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
-            yesterday_groups = group_model.get_all_groups(yesterday, include_archived=True)
+    @app_commands.command(
+        name="update_time",
+        description="[Admin] Permanently change a group's default time/map in schedule.json"
+    )
+    @app_commands.describe(
+        group_number="Group number (1-12)",
+        match_number="Match number (1 or 2)",
+        idp_time="New IDP time (e.g. '01:00 PM')",
+        start_time="New start time (e.g. '01:06 PM')",
+        map_name="New map name (e.g. ERANGEL)"
+    )
+    @app_commands.checks.has_permissions(administrator=True)
+    async def update_time(
+        self, interaction: discord.Interaction,
+        group_number: int, match_number: int,
+        idp_time: str = None, start_time: str = None, map_name: str = None
+    ):
+        if group_number < 1 or group_number > 50:
+            await interaction.response.send_message(
+                embed=error_embed("❌ Invalid", "Group number must be between 1 and 50."),
+                ephemeral=True
+            )
+            return
 
-            if yesterday_groups:
-                await self._cleanup_event(guild, yesterday, yesterday_groups)
-                print(f"🧹 Cleaned up {len(yesterday_groups)} groups from {yesterday}", flush=True)
+        if match_number not in (1, 2):
+            await interaction.response.send_message(
+                embed=error_embed("❌ Invalid", "Match number must be 1 or 2."),
+                ephemeral=True
+            )
+            return
 
-            # Clean up expired bans
-            expired_count = punishment.cleanup_expired_bans()
-            if expired_count:
-                print(f"🧹 Expired {expired_count} bans", flush=True)
+        if not any([idp_time, start_time, map_name]):
+            await interaction.response.send_message(
+                embed=error_embed("❌ Nothing to Update", "Provide at least one of: idp_time, start_time, map_name."),
+                ephemeral=True
+            )
+            return
 
-            # Log
-            log_channel_id = get_channel_config("admin_log")
-            if log_channel_id:
-                log_ch = guild.get_channel(log_channel_id)
-                if log_ch:
-                    await log_ch.send(
-                        embed=make_embed(
-                            "🕛 Nightly Cleanup Complete",
-                            f"{Theme.SEP}\n\n"
-                            f"**Groups cleaned:** `{len(yesterday_groups)}`\n"
-                            f"**Bans expired:** `{expired_count}`\n\n{Theme.SEP}",
-                            Theme.SUCCESS
-                        )
-                    )
+        schedule = load_schedule()
 
-            print("✅ Nightly cleanup complete.", flush=True)
+        # Find or create the entry
+        target = None
+        for s in schedule:
+            if s.get("group_number") == group_number:
+                target = s
+                break
 
-    @midnight_cleanup.before_loop
-    async def before_cleanup(self):
-        await self.bot.wait_until_ready()
+        if not target:
+            target = {
+                "group_number": group_number,
+                "shift": "day" if group_number <= 6 else "evening",
+                "match1": {"idp": "TBD", "start": "TBD", "map": "TBD"},
+                "match2": {"idp": "TBD", "start": "TBD", "map": "TBD"},
+            }
+            schedule.append(target)
+
+        match_key = f"match{match_number}"
+        if idp_time:
+            target[match_key]["idp"] = idp_time.strip()
+        if start_time:
+            target[match_key]["start"] = start_time.strip()
+        if map_name:
+            target[match_key]["map"] = map_name.strip().upper()
+
+        success = save_schedule(schedule)
+
+        if success:
+            updates = []
+            if idp_time: updates.append(f"  ◆ **IDP:** `{idp_time}`")
+            if start_time: updates.append(f"  ◆ **Start:** `{start_time}`")
+            if map_name: updates.append(f"  ◆ **Map:** `{map_name.upper()}`")
+
+            await interaction.response.send_message(
+                embed=success_embed(
+                    f"✅ Schedule Updated — Group {group_number} Match {match_number}",
+                    f"{Theme.SEP}\n\n" + "\n".join(updates) +
+                    f"\n\n*Changes saved to `schedule.json` and will take effect tomorrow.*\n\n{Theme.SEP}"
+                ),
+                ephemeral=True
+            )
+        else:
+            await interaction.response.send_message(
+                embed=error_embed("❌ Save Failed", "Could not write to schedule.json."),
+                ephemeral=True
+            )
 
     # ─────────────── INTERNAL CLEANUP ───────────────
 
@@ -361,12 +661,10 @@ class ProvisioningCog(commands.Cog):
         category_ids = set()
 
         for g in group_docs:
-            # Delete channel
             ch_id = g.get("channel_id")
             if ch_id:
                 await cleanup_channel(guild, ch_id)
 
-            # Delete role
             role_id = g.get("role_id")
             if role_id:
                 await cleanup_role(guild, role_id)
@@ -377,11 +675,9 @@ class ProvisioningCog(commands.Cog):
 
             await asyncio.sleep(0.3)
 
-        # Delete categories (after all channels in them are gone)
         for cat_id in category_ids:
             await cleanup_category(guild, cat_id)
 
-        # Archive in database
         group_model.archive_groups(event_id)
 
     async def _refresh_availability(self, guild, event_id):
@@ -395,7 +691,16 @@ class ProvisioningCog(commands.Cog):
             return
 
         all_groups = group_model.get_all_groups(event_id)
-        embed = build_slot_availability_embed(all_groups)
+        embed = build_registration_board_embed(all_groups)
+
+        slot_msg_id = get_config("slot_message_id")
+        if slot_msg_id:
+            try:
+                msg = await channel.fetch_message(slot_msg_id)
+                await msg.edit(embed=embed)
+                return
+            except discord.NotFound:
+                pass
 
         avail_msg_id = get_config(f"slot_availability_msg_{event_id}")
         if avail_msg_id:
@@ -405,10 +710,6 @@ class ProvisioningCog(commands.Cog):
                 return
             except discord.NotFound:
                 pass
-
-        from cogs.registration import PersistentRegisterView
-        msg = await channel.send(embed=embed, view=PersistentRegisterView())
-        set_config(f"slot_availability_msg_{event_id}", msg.id)
 
 
 async def setup(bot):
