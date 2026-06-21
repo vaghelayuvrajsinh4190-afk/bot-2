@@ -31,7 +31,7 @@ def connect():
         print(f"❌ FATAL: Could not connect to MongoDB: {e}", flush=True)
         exit(1)
 
-    db = client["tortuga_db"]
+    db = client["mack_db"]
     return client, db
 
 

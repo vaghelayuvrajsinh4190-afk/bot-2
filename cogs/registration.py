@@ -625,7 +625,7 @@ class PersistentRegisterView(ui.View):
             btn = ui.Button(
                 label="🔒 Registration Closed",
                 style=discord.ButtonStyle.secondary,
-                custom_id="tortuga_register_btn",
+                custom_id="mack_register_btn",
                 disabled=True
             )
             self.add_item(btn)
@@ -633,7 +633,7 @@ class PersistentRegisterView(ui.View):
             btn = ui.Button(
                 label="📥 Register Team",
                 style=discord.ButtonStyle.green,
-                custom_id="tortuga_register_btn",
+                custom_id="mack_register_btn",
             )
             btn.callback = self._register_callback
             self.add_item(btn)

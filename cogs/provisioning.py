@@ -490,7 +490,8 @@ class ProvisioningCog(commands.Cog):
     @app_commands.describe(
         group_count="Number of groups to create (default: from config or 12)",
         capacity="Max teams per group (default: from config or 21)",
-        event_name="Display name for the event (default: Scrims Qualifiers)"
+        event_name="Display name for the event (default: Scrims Qualifiers)",
+        force="Force re-provision (auto-deprovision existing groups first)"
     )
     @app_commands.checks.has_permissions(administrator=True)
     async def provision(
@@ -498,25 +499,45 @@ class ProvisioningCog(commands.Cog):
         interaction: discord.Interaction,
         group_count: int = None,
         capacity: int = None,
-        event_name: str = "Scrims Qualifiers"
+        event_name: str = "Scrims Qualifiers",
+        force: bool = False
     ):
         event_id = get_today_event_id()
 
         # Check if already provisioned
-        existing = group_model.get_all_groups(event_id)
+        existing = group_model.get_all_groups(event_id, include_archived=True)
         if existing:
-            await interaction.response.send_message(
-                embed=make_embed(
-                    "⚠️ Already Provisioned",
-                    f"{Theme.SEP}\n\n"
-                    f"Today's groups are already set up!\n"
-                    f"**{len(existing)}** groups exist for `{event_id}`.\n\n"
-                    f"Use `/deprovision` to tear them down first, or `/addgroups` to add more.\n\n{Theme.SEP}",
-                    Theme.WARNING
-                ),
-                ephemeral=True
-            )
-            return
+            if force:
+                # Auto-deprovision first
+                await self._cleanup_event(interaction.guild, event_id, existing)
+                # Delete all group docs for this event (hard delete for fresh start)
+                from database import groups as groups_collection
+                groups_collection.delete_many({"event_id": event_id})
+            else:
+                # Check if groups are actually alive (channels exist)
+                alive = any(
+                    interaction.guild.get_channel(g.get("channel_id"))
+                    for g in existing if not g.get("archived")
+                )
+                if alive:
+                    await interaction.response.send_message(
+                        embed=make_embed(
+                            "⚠️ Already Provisioned",
+                            f"{Theme.SEP}\n\n"
+                            f"Today's groups are already set up!\n"
+                            f"**{len(existing)}** groups exist for `{event_id}`.\n\n"
+                            f"Use `/provision force:True` to tear down and recreate,\n"
+                            f"or `/addgroups` to add more.\n\n{Theme.SEP}",
+                            Theme.WARNING
+                        ),
+                        ephemeral=True
+                    )
+                    return
+                else:
+                    # Stale data — channels were deleted manually, clean up DB
+                    await self._cleanup_event(interaction.guild, event_id, existing)
+                    from database import groups as groups_collection
+                    groups_collection.delete_many({"event_id": event_id})
 
         count = group_count or int(get_config("default_group_count", DEFAULT_GROUP_COUNT))
         cap = capacity or int(get_config("default_group_capacity", DEFAULT_GROUP_CAPACITY))
