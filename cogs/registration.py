@@ -1,11 +1,12 @@
-"""
-Mack Bot — Registration Cog
+“””
+Mack Bot  — Registration Cog
 Handles the full registration flow:
-  - /setup command (permanent embed + register button)
-  - 30-Day "Already Registered" intercept
-  - 3-step modal chain: Modal 1 (Team Info) → Modal 2 (Player UIDs) → Teammate Select
-  - Atomic slot claim + public receipt
-"""
+
+- /setup command (permanent embed + register button)
+- 30-Day “Already Registered” intercept
+- 3-step modal chain: Modal 1 (Team Info) → Modal 2 (Player UIDs) → Teammate Select
+- Atomic slot claim + public receipt
+  “””
 
 import datetime
 import discord
@@ -14,91 +15,95 @@ from discord import app_commands, ui
 
 from config import Theme, TIMEZONE_OFFSET
 from utils.embeds import (
-    make_embed, error_embed, success_embed, build_roster_embed,
-    build_slot_availability_embed, build_registration_receipt_embed,
-    build_registration_board_embed
+make_embed, error_embed, success_embed, build_roster_embed,
+build_slot_availability_embed, build_registration_receipt_embed,
+build_registration_board_embed
 )
 from models import team_profile, group as group_model, registration as reg_model, punishment
-
 
 # ═══════════════════ HELPERS ═══════════════════
 
 def get_today_event_id():
-    """Get today's event ID based on IST date."""
-    utc_now = datetime.datetime.utcnow()
-    local_now = utc_now + datetime.timedelta(hours=TIMEZONE_OFFSET)
-    return local_now.strftime("%Y-%m-%d")
-
+“”“Get today’s event ID based on IST date.”””
+utc_now = datetime.datetime.utcnow()
+local_now = utc_now + datetime.timedelta(hours=TIMEZONE_OFFSET)
+return local_now.strftime(”%Y-%m-%d”)
 
 # ═══════════════════ MODAL 1: TEAM INFO (Step 1/3) ═══════════════════
 
-class TeamInfoModal(ui.Modal, title="📋 Team Registration — Step 1/3"):
-    """Modal 1: Basic team details."""
+class TeamInfoModal(ui.Modal, title=“📋 Team Registration — Step 1/3”):
+“”“Modal 1: Basic team details.”””
 
-    team_name = ui.TextInput(
-        label="Team Name",
-        placeholder="Enter a unique team name (e.g. Galaxy Crows)",
-        max_length=50,
-        style=discord.TextStyle.short
-    )
-    owner_name = ui.TextInput(
-        label="Owner / IGL Name",
-        placeholder="Your real name or IGN",
-        max_length=50,
-        style=discord.TextStyle.short
-    )
-    email = ui.TextInput(
-        label="Email Address",
-        placeholder="your@email.com",
-        max_length=100,
-        style=discord.TextStyle.short,
-        required=False
-    )
-    contact = ui.TextInput(
-        label="Contact Number",
-        placeholder="+91 XXXXX XXXXX",
-        max_length=20,
-        style=discord.TextStyle.short,
-        required=False
-    )
+```
+team_name = ui.TextInput(
+    label="Team Name",
+    placeholder="Enter a unique team name (e.g. Galaxy Crows)",
+    max_length=50,
+    style=discord.TextStyle.short
+)
+owner_name = ui.TextInput(
+    label="Owner / IGL Name",
+    placeholder="Your real name or IGN",
+    max_length=50,
+    style=discord.TextStyle.short
+)
+email = ui.TextInput(
+    label="Email Address",
+    placeholder="your@email.com",
+    max_length=100,
+    style=discord.TextStyle.short,
+    required=False
+)
+contact = ui.TextInput(
+    label="Contact Number",
+    placeholder="+91 XXXXX XXXXX",
+    max_length=20,
+    style=discord.TextStyle.short,
+    required=False
+)
 
-    def __init__(self, prefill: dict = None):
-        super().__init__()
-        if prefill:
-            self.team_name.default = prefill.get("team_name", "")
-            self.owner_name.default = prefill.get("owner_name", "")
-            self.email.default = prefill.get("email", "")
-            self.contact.default = prefill.get("contact", "")
+def __init__(self, prefill: dict = None):
+    super().__init__()
+    if prefill:
+        self.team_name.default = prefill.get("team_name", "")
+        self.owner_name.default = prefill.get("owner_name", "")
+        self.email.default = prefill.get("email", "")
+        self.contact.default = prefill.get("contact", "")
 
-    async def on_submit(self, interaction: discord.Interaction):
-        owner_id = str(interaction.user.id)
-        name = self.team_name.value.strip()
+async def on_submit(self, interaction: discord.Interaction):
+    owner_id = str(interaction.user.id)
+    name = self.team_name.value.strip()
 
-        if not name:
-            await interaction.response.send_message(
-                embed=error_embed("❌ Invalid Team Name", "Team name cannot be empty."),
-                ephemeral=True
-            )
-            return
+    if not name:
+        await interaction.response.send_message(
+            embed=error_embed("❌ Invalid Team Name", "Team name cannot be empty."),
+            ephemeral=True
+        )
+        return
 
-        # Check team name uniqueness
-        is_dup, existing_owner = team_profile.check_duplicate_team_name(name, exclude_owner_id=owner_id)
-        if is_dup:
-            await interaction.response.send_message(
-                embed=error_embed("❌ Name Taken", f"Team name **{name}** is already registered by another squad!"),
-                ephemeral=True
-            )
-            return
+    # Check team name uniqueness
+    is_dup, existing_owner = team_profile.check_duplicate_team_name(name, exclude_owner_id=owner_id)
+    if is_dup:
+        await interaction.response.send_message(
+            embed=error_embed("❌ Name Taken", f"Team name **{name}** is already registered by another squad!"),
+            ephemeral=True
+        )
+        return
 
-        # Store data temporarily and open Modal 2
-        modal2_data = {
-            "team_name": name,
-            "owner_name": self.owner_name.value.strip(),
-            "email": self.email.value.strip(),
-            "contact": self.contact.value.strip(),
-        }
+    # Store data temporarily and open Modal 2
+    modal2_data = {
+        "team_name": name,
+        "owner_name": self.owner_name.value.strip(),
+        "email": self.email.value.strip(),
+        "contact": self.contact.value.strip(),
+    }
 
-        # Load existing player data for pre-fill
+    # Only hit the DB again for prefill data if this is actually an edit flow.
+    # Fresh registrations (the common path) skip this entirely — it was
+    # previously fetched and discarded every time, costing a blocking
+    # Mongo round-trip inside the 3-second modal response window.
+    is_edit = getattr(self, '_is_edit', False)
+    if is_edit:
         profile = team_profile.get_profile(owner_id)
         prefill_players = {}
         if profile:
@@ -107,841 +112,845 @@ class TeamInfoModal(ui.Modal, title="📋 Team Registration — Step 1/3"):
             for i in range(min(4, len(uids))):
                 prefill_players[f"uid_{i+1}"] = uids[i] if i < len(uids) else ""
                 prefill_players[f"ign_{i+1}"] = igns[i] if i < len(igns) else ""
+        modal2 = PlayerDetailsModal(modal2_data, prefill_players) if profile else PlayerDetailsModal(modal2_data)
+    else:
+        modal2 = PlayerDetailsModal(modal2_data)
 
-        # Check if this is an edit flow (prefill Modal 2)
-        if hasattr(self, '_is_edit') and self._is_edit and profile:
-            modal2 = PlayerDetailsModal(modal2_data, prefill_players)
-        else:
-            modal2 = PlayerDetailsModal(modal2_data)
-
-        await interaction.response.send_modal(modal2)
-
+    await interaction.response.send_modal(modal2)
+```
 
 # ═══════════════════ MODAL 2: PLAYER DETAILS (Step 2/3) ═══════════════════
 
-class PlayerDetailsModal(ui.Modal, title="🎮 Player Roster — Step 2/3"):
-    """Modal 2: Player UIDs and IGNs."""
+class PlayerDetailsModal(ui.Modal, title=“🎮 Player Roster — Step 2/3”):
+“”“Modal 2: Player UIDs and IGNs.”””
 
-    player1 = ui.TextInput(
-        label="Player 1 — UID | IGN",
-        placeholder="e.g. 5123456789 | ProPlayer1",
-        max_length=80,
-        style=discord.TextStyle.short
-    )
-    player2 = ui.TextInput(
-        label="Player 2 — UID | IGN",
-        placeholder="e.g. 5987654321 | ProPlayer2",
-        max_length=80,
-        style=discord.TextStyle.short
-    )
-    player3 = ui.TextInput(
-        label="Player 3 — UID | IGN",
-        placeholder="e.g. 5111222333 | ProPlayer3",
-        max_length=80,
-        style=discord.TextStyle.short
-    )
-    player4 = ui.TextInput(
-        label="Player 4 — UID | IGN",
-        placeholder="e.g. 5444555666 | ProPlayer4",
-        max_length=80,
-        style=discord.TextStyle.short
-    )
+```
+player1 = ui.TextInput(
+    label="Player 1 — UID | IGN",
+    placeholder="e.g. 5123456789 | ProPlayer1",
+    max_length=80,
+    style=discord.TextStyle.short
+)
+player2 = ui.TextInput(
+    label="Player 2 — UID | IGN",
+    placeholder="e.g. 5987654321 | ProPlayer2",
+    max_length=80,
+    style=discord.TextStyle.short
+)
+player3 = ui.TextInput(
+    label="Player 3 — UID | IGN",
+    placeholder="e.g. 5111222333 | ProPlayer3",
+    max_length=80,
+    style=discord.TextStyle.short
+)
+player4 = ui.TextInput(
+    label="Player 4 — UID | IGN",
+    placeholder="e.g. 5444555666 | ProPlayer4",
+    max_length=80,
+    style=discord.TextStyle.short
+)
 
-    def __init__(self, team_data: dict, prefill: dict = None):
-        super().__init__()
-        self.team_data = team_data
-        if prefill:
-            uids = [prefill.get(f"uid_{i}", "") for i in range(1, 5)]
-            igns = [prefill.get(f"ign_{i}", "") for i in range(1, 5)]
-            defaults = []
-            for i in range(4):
-                u = uids[i] if i < len(uids) else ""
-                g = igns[i] if i < len(igns) else ""
-                if u or g:
-                    defaults.append(f"{u} | {g}")
-                else:
-                    defaults.append("")
-            if len(defaults) > 0 and defaults[0]:
-                self.player1.default = defaults[0]
-            if len(defaults) > 1 and defaults[1]:
-                self.player2.default = defaults[1]
-            if len(defaults) > 2 and defaults[2]:
-                self.player3.default = defaults[2]
-            if len(defaults) > 3 and defaults[3]:
-                self.player4.default = defaults[3]
+def __init__(self, team_data: dict, prefill: dict = None):
+    super().__init__()
+    self.team_data = team_data
+    if prefill:
+        uids = [prefill.get(f"uid_{i}", "") for i in range(1, 5)]
+        igns = [prefill.get(f"ign_{i}", "") for i in range(1, 5)]
+        defaults = []
+        for i in range(4):
+            u = uids[i] if i < len(uids) else ""
+            g = igns[i] if i < len(igns) else ""
+            if u or g:
+                defaults.append(f"{u} | {g}")
+            else:
+                defaults.append("")
+        if len(defaults) > 0 and defaults[0]:
+            self.player1.default = defaults[0]
+        if len(defaults) > 1 and defaults[1]:
+            self.player2.default = defaults[1]
+        if len(defaults) > 2 and defaults[2]:
+            self.player3.default = defaults[2]
+        if len(defaults) > 3 and defaults[3]:
+            self.player4.default = defaults[3]
 
-    def _parse_player(self, value: str):
-        """Parse 'UID | IGN' format. Returns (uid, ign) tuple."""
-        if "|" in value:
-            parts = value.split("|", 1)
-            return parts[0].strip(), parts[1].strip()
-        return value.strip(), value.strip()
+def _parse_player(self, value: str):
+    """Parse 'UID | IGN' format. Returns (uid, ign) tuple."""
+    if "|" in value:
+        parts = value.split("|", 1)
+        return parts[0].strip(), parts[1].strip()
+    return value.strip(), value.strip()
 
-    async def on_submit(self, interaction: discord.Interaction):
-        owner_id = str(interaction.user.id)
+async def on_submit(self, interaction: discord.Interaction):
+    owner_id = str(interaction.user.id)
 
-        # Parse all 4 players
-        players_raw = [
-            self.player1.value.strip(),
-            self.player2.value.strip(),
-            self.player3.value.strip(),
-            self.player4.value.strip(),
-        ]
+    # Parse all 4 players
+    players_raw = [
+        self.player1.value.strip(),
+        self.player2.value.strip(),
+        self.player3.value.strip(),
+        self.player4.value.strip(),
+    ]
 
-        player_uids = []
-        player_igns = []
-        player_list = []
+    player_uids = []
+    player_igns = []
+    player_list = []
 
-        for raw in players_raw:
-            if not raw:
-                continue
-            uid, ign = self._parse_player(raw)
-            player_uids.append(uid)
-            player_igns.append(ign)
-            player_list.append(ign)
+    for raw in players_raw:
+        if not raw:
+            continue
+        uid, ign = self._parse_player(raw)
+        player_uids.append(uid)
+        player_igns.append(ign)
+        player_list.append(ign)
 
-        if len(player_list) < 1:
-            await interaction.response.send_message(
-                embed=error_embed("❌ No Players", "You must enter at least one player."),
-                ephemeral=True
-            )
-            return
-
-        # Save the team profile with all data (including new fields)
-        team_profile.save_profile(
-            owner_id=owner_id,
-            team_name=self.team_data["team_name"],
-            players=player_list,
-            owner_name=self.team_data.get("owner_name"),
-            email=self.team_data.get("email"),
-            contact=self.team_data.get("contact"),
-            player_uids=player_uids,
-            player_igns=player_igns,
-        )
-
-        # Show teammate selection (Step 3)
-        roster_text = "\n".join([f"  │  ✦ `{player_uids[i]}` — {player_igns[i]}" for i in range(len(player_igns))])
-        embed = make_embed(
-            "👥 Final Step: Select Teammates — Step 3/3",
-            f"✅ Team **{self.team_data['team_name']}** profile saved!\n\n"
-            f"╭── 📋 **Roster** ──╮\n{roster_text}\n╰───────────────────╯\n\n"
-            f"{Theme.THIN_SEP}\n"
-            f"**Next:** Select your **4 to 5 squad members** from the dropdown below.\n"
-            f"You must include yourself.",
-            Theme.ACCENT,
-            "Step 3 of 3 — Select teammates"
-        )
+    if len(player_list) < 1:
         await interaction.response.send_message(
-            embed=embed,
-            view=TeammateSelectView(self.team_data["team_name"], player_list, player_uids, player_igns),
+            embed=error_embed("❌ No Players", "You must enter at least one player."),
             ephemeral=True
         )
+        return
 
+    # Save the team profile with all data (including new fields)
+    team_profile.save_profile(
+        owner_id=owner_id,
+        team_name=self.team_data["team_name"],
+        players=player_list,
+        owner_name=self.team_data.get("owner_name"),
+        email=self.team_data.get("email"),
+        contact=self.team_data.get("contact"),
+        player_uids=player_uids,
+        player_igns=player_igns,
+    )
+
+    # Show teammate selection (Step 3)
+    roster_text = "\n".join([f"  │  ✦ `{player_uids[i]}` — {player_igns[i]}" for i in range(len(player_igns))])
+    embed = make_embed(
+        "👥 Final Step: Select Teammates — Step 3/3",
+        f"✅ Team **{self.team_data['team_name']}** profile saved!\n\n"
+        f"╭── 📋 **Roster** ──╮\n{roster_text}\n╰───────────────────╯\n\n"
+        f"{Theme.THIN_SEP}\n"
+        f"**Next:** Select your **4 to 5 squad members** from the dropdown below.\n"
+        f"You must include yourself.",
+        Theme.ACCENT,
+        "Step 3 of 3 — Select teammates"
+    )
+    await interaction.response.send_message(
+        embed=embed,
+        view=TeammateSelectView(self.team_data["team_name"], player_list, player_uids, player_igns),
+        ephemeral=True
+    )
+```
 
 # ═══════════════════ TEAMMATE SELECTION ═══════════════════
 
 class ConfirmRegistrationView(ui.View):
-    """View with a button to finalize registration."""
+“”“View with a button to finalize registration.”””
 
-    def __init__(self, team_name, players, selected_members, player_uids=None, player_igns=None):
-        super().__init__(timeout=120)
-        self.team_name = team_name
-        self.players = players
-        self.selected_members = selected_members
-        self.player_uids = player_uids or []
-        self.player_igns = player_igns or []
+```
+def __init__(self, team_name, players, selected_members, player_uids=None, player_igns=None):
+    super().__init__(timeout=120)
+    self.team_name = team_name
+    self.players = players
+    self.selected_members = selected_members
+    self.player_uids = player_uids or []
+    self.player_igns = player_igns or []
 
-    @ui.button(
-        label="Confirm & Complete Registration",
-        style=discord.ButtonStyle.primary,
-        emoji="✅",
-        custom_id="finalize_reg_btn"
-    )
-    async def confirm_registration(self, interaction: discord.Interaction, button: ui.Button):
-        owner_id = str(interaction.user.id)
-        event_id = get_today_event_id()
+@ui.button(
+    label="Confirm & Complete Registration",
+    style=discord.ButtonStyle.primary,
+    emoji="✅",
+    custom_id="finalize_reg_btn"
+)
+async def confirm_registration(self, interaction: discord.Interaction, button: ui.Button):
+    owner_id = str(interaction.user.id)
+    event_id = get_today_event_id()
 
-        # Check if banned
-        is_ban, ban_doc = punishment.is_banned(owner_id)
-        if is_ban:
-            await interaction.response.send_message(
-                embed=error_embed("❌ Error", "You are banned and cannot register."),
-                ephemeral=True
-            )
-            return
-
-        # Check if already registered today
-        if reg_model.is_already_registered(owner_id, event_id):
-            await interaction.response.send_message(
-                embed=error_embed("❌ Error", "You are already registered for today."),
-                ephemeral=True
-            )
-            return
-
-        # Check teammate status
-        for m in self.selected_members:
-            is_reg, existing_team = reg_model.is_teammate_registered(str(m.id), event_id)
-            if is_reg:
-                await interaction.response.send_message(
-                    embed=error_embed("❌ Error", f"{m.mention} is already registered in team **{existing_team}**."),
-                    ephemeral=True
-                )
-                return
-
-        # Check group availability
-        available_groups = group_model.get_open_groups(event_id)
-        if not available_groups:
-            await interaction.response.send_message(
-                embed=error_embed("❌ All Groups Full", "All groups for today are completely full."),
-                ephemeral=True
-            )
-            return
-
-        await interaction.response.defer(ephemeral=True)
-
-        # Atomic slot claim
-        assigned_group = group_model.claim_slot(event_id)
-        if not assigned_group:
-            await interaction.followup.send(
-                embed=error_embed("❌ Claim Failed", "All groups filled up while processing your request."),
-                ephemeral=True
-            )
-            return
-
-        # Create registration
-        teammate_ids = [str(m.id) for m in self.selected_members]
-        reg_model.create_registration(
-            owner_id=owner_id,
-            event_id=event_id,
-            group_id=assigned_group["group_id"],
-            team_name=self.team_name,
-            players=self.players,
-            teammate_ids=teammate_ids
-        )
-
-        # Save teammate IDs to profile
-        team_profile.save_profile(
-            owner_id, self.team_name, self.players, teammate_ids,
-            player_uids=self.player_uids, player_igns=self.player_igns
-        )
-
-        # Grant group role
-        guild = interaction.guild
-        group_role = guild.get_role(assigned_group["role_id"])
-        if group_role:
-            for m in self.selected_members:
-                try:
-                    await m.add_roles(group_role)
-                except (discord.Forbidden, Exception):
-                    pass
-
-        # Get match details
-        m1 = assigned_group.get("match1", {})
-        m2 = assigned_group.get("match2", {})
-        group_id = assigned_group["group_id"]
-
-        # Date display
-        from cogs.provisioning import get_today_display
-        event_date_display = get_today_display().title()
-
-        # Build premium success embed
-        success = make_embed(
-            "🎯 Registration Complete!",
-            f"🏆 **Team** — `{self.team_name}`\n"
-            f"⚙️ **Assigned Group** — `{group_id}`\n"
-            f"📅 **Date** — `{event_date_display}`\n\n"
-            f"╭── 🎮 **Match Schedule** ──╮\n"
-            f"│  **Match 1:** `{m1.get('start', 'TBD')}` │ IDP `{m1.get('idp', 'TBD')}` │ Map `{m1.get('map', 'TBD')}`\n"
-            f"│  **Match 2:** `{m2.get('start', 'TBD')}` │ IDP `{m2.get('idp', 'TBD')}` │ Map `{m2.get('map', 'TBD')}`\n"
-            f"╰────────────────────────────╯\n\n"
-            f"Please join your group channel when it's available.\n"
-            f"🎱 **Best of luck 👊 for your matches!!**",
-            Theme.SUCCESS,
-            "Mack Bot 🚀 2027 Edition"
-        )
-        await interaction.followup.send(embed=success, ephemeral=True)
-
-        # Refresh the roster in the group channel
-        await self._refresh_group_roster(interaction.guild, assigned_group, event_id)
-
-        # Refresh the slot availability embed in register channel
-        await self._refresh_slot_availability(interaction.guild, event_id)
-
-        # Post public receipt to #registered-teams log channel
-        await self._post_public_receipt(
-            interaction.guild, self.team_name, group_id,
-            self.players, self.player_uids, self.player_igns,
-            self.selected_members, event_date_display
-        )
-
-    async def _refresh_group_roster(self, guild, group_doc, event_id):
-        """Update the live roster embed in the group channel."""
-        channel_id = group_doc.get("channel_id")
-        if not channel_id:
-            return
-
-        channel = guild.get_channel(channel_id)
-        if not channel:
-            return
-
-        regs = reg_model.get_group_registrations(group_doc["group_id"], event_id)
-        embed = build_roster_embed(group_doc, regs, group_doc["capacity"])
-
-        msg_id = group_doc.get("roster_message_id")
-        message = None
-        if msg_id:
-            try:
-                message = await channel.fetch_message(msg_id)
-                await message.edit(embed=embed)
-            except discord.NotFound:
-                message = None
-
-        if message is None:
-            message = await channel.send(embed=embed)
-            group_model.update_roster_message(event_id, group_doc["group_id"], message.id)
-
-    async def _refresh_slot_availability(self, guild, event_id):
-        """Update the slot availability embed in the register channel."""
-        from database import get_channel_config, get_config, set_config
-
-        reg_channel_id = get_channel_config("register")
-        if not reg_channel_id:
-            return
-
-        channel = guild.get_channel(reg_channel_id)
-        if not channel:
-            return
-
-        all_groups = group_model.get_all_groups(event_id)
-        embed = build_registration_board_embed(all_groups)
-
-        # Try to find and edit the existing permanent board message
-        slot_msg_id = get_config("slot_message_id")
-        if slot_msg_id:
-            try:
-                msg = await channel.fetch_message(slot_msg_id)
-                await msg.edit(embed=embed)
-                return
-            except discord.NotFound:
-                pass
-
-        # Fallback: update event-specific message
-        avail_msg_id = get_config(f"slot_availability_msg_{event_id}")
-        if avail_msg_id:
-            try:
-                msg = await channel.fetch_message(avail_msg_id)
-                await msg.edit(embed=embed)
-                return
-            except discord.NotFound:
-                pass
-
-    async def _post_public_receipt(self, guild, team_name, group_id, players,
-                                    player_uids, player_igns, members, date_display):
-        """Post a confirmation receipt to #registered-teams."""
-        from database import get_channel_config
-
-        log_channel_id = get_channel_config("registered_teams")
-        if not log_channel_id:
-            return
-
-        channel = guild.get_channel(log_channel_id)
-        if not channel:
-            return
-
-        embed = build_registration_receipt_embed(
-            team_name, group_id, players, player_uids,
-            player_igns, members, date_display
-        )
-        await channel.send(embed=embed)
-
-
-class TeammateSelect(ui.UserSelect):
-    """Dropdown to select 4 to 5 squad members."""
-
-    def __init__(self, team_name, players, player_uids=None, player_igns=None):
-        self.team_name = team_name
-        self.players = players
-        self.player_uids = player_uids or []
-        self.player_igns = player_igns or []
-        super().__init__(
-            placeholder="Select your 4-5 teammates",
-            min_values=4,
-            max_values=5
-        )
-
-    async def callback(self, interaction: discord.Interaction):
-        members = self.values
-        owner_id = str(interaction.user.id)
-        event_id = get_today_event_id()
-
-        # Validation: must include yourself
-        if interaction.user not in members:
-            await interaction.response.send_message(
-                embed=error_embed(
-                    "⛔ Selection Error",
-                    f"{Theme.SEP}\n\nYou must **include yourself** in the squad selection.\n"
-                    f"*➤ Select yourself plus your teammates.*\n\n{Theme.SEP}"
-                ),
-                ephemeral=True
-            )
-            return
-
-        # Validation: no bots
-        bots = [m.mention for m in members if m.bot]
-        if bots:
-            await interaction.response.send_message(
-                embed=error_embed(
-                    "⛔ Selection Error",
-                    f"{Theme.SEP}\n\nBots cannot be squad members:\n\n" +
-                    "\n".join([f"  ⚠️ {b}" for b in bots]) +
-                    f"\n\n*➤ Select only real players.*\n\n{Theme.SEP}"
-                ),
-                ephemeral=True
-            )
-            return
-
-        # Validation: check if any teammate is already registered today
-        for m in members:
-            is_reg, existing_team = reg_model.is_teammate_registered(str(m.id), event_id)
-            if is_reg:
-                await interaction.response.send_message(
-                    embed=error_embed(
-                        "⛔ Already Registered",
-                        f"{Theme.SEP}\n\n"
-                        f"{m.mention} is already registered in team **{existing_team}** for today.\n"
-                        f"Each player can only be in one team per day.\n\n{Theme.SEP}"
-                    ),
-                    ephemeral=True
-                )
-                return
-
-        # Check if groups are available
-        available_groups = group_model.get_open_groups(event_id)
-        if not available_groups:
-            await interaction.response.send_message(
-                embed=error_embed(
-                    "❌ All Groups Full",
-                    f"{Theme.SEP}\n\n"
-                    f"All groups for today are **completely full**!\n"
-                    f"Please wait for an admin to add more groups.\n\n{Theme.SEP}"
-                ),
-                ephemeral=True
-            )
-            return
-
-        # Send confirmation button response
-        confirm_view = ConfirmRegistrationView(
-            self.team_name, self.players, members,
-            self.player_uids, self.player_igns
-        )
+    # Check if banned
+    is_ban, ban_doc = punishment.is_banned(owner_id)
+    if is_ban:
         await interaction.response.send_message(
-            content="Teammates selected. Click the button below to Finalize Registration.",
-            view=confirm_view,
+            embed=error_embed("❌ Error", "You are banned and cannot register."),
             ephemeral=True
         )
+        return
 
+    # Check if already registered today
+    if reg_model.is_already_registered(owner_id, event_id):
+        await interaction.response.send_message(
+            embed=error_embed("❌ Error", "You are already registered for today."),
+            ephemeral=True
+        )
+        return
+
+    # Check teammate status
+    for m in self.selected_members:
+        is_reg, existing_team = reg_model.is_teammate_registered(str(m.id), event_id)
+        if is_reg:
+            await interaction.response.send_message(
+                embed=error_embed("❌ Error", f"{m.mention} is already registered in team **{existing_team}**."),
+                ephemeral=True
+            )
+            return
+
+    # Check group availability
+    available_groups = group_model.get_open_groups(event_id)
+    if not available_groups:
+        await interaction.response.send_message(
+            embed=error_embed("❌ All Groups Full", "All groups for today are completely full."),
+            ephemeral=True
+        )
+        return
+
+    await interaction.response.defer(ephemeral=True)
+
+    # Atomic slot claim
+    assigned_group = group_model.claim_slot(event_id)
+    if not assigned_group:
+        await interaction.followup.send(
+            embed=error_embed("❌ Claim Failed", "All groups filled up while processing your request."),
+            ephemeral=True
+        )
+        return
+
+    # Create registration
+    teammate_ids = [str(m.id) for m in self.selected_members]
+    reg_model.create_registration(
+        owner_id=owner_id,
+        event_id=event_id,
+        group_id=assigned_group["group_id"],
+        team_name=self.team_name,
+        players=self.players,
+        teammate_ids=teammate_ids
+    )
+
+    # Save teammate IDs to profile
+    team_profile.save_profile(
+        owner_id, self.team_name, self.players, teammate_ids,
+        player_uids=self.player_uids, player_igns=self.player_igns
+    )
+
+    # Grant group role
+    guild = interaction.guild
+    group_role = guild.get_role(assigned_group["role_id"])
+    if group_role:
+        for m in self.selected_members:
+            try:
+                await m.add_roles(group_role)
+            except (discord.Forbidden, Exception):
+                pass
+
+    # Get match details
+    m1 = assigned_group.get("match1", {})
+    m2 = assigned_group.get("match2", {})
+    group_id = assigned_group["group_id"]
+
+    # Date display
+    from cogs.provisioning import get_today_display
+    event_date_display = get_today_display().title()
+
+    # Build premium success embed
+    success = make_embed(
+        "🎯 Registration Complete!",
+        f"🏆 **Team** — `{self.team_name}`\n"
+        f"⚙️ **Assigned Group** — `{group_id}`\n"
+        f"📅 **Date** — `{event_date_display}`\n\n"
+        f"╭── 🎮 **Match Schedule** ──╮\n"
+        f"│  **Match 1:** `{m1.get('start', 'TBD')}` │ IDP `{m1.get('idp', 'TBD')}` │ Map `{m1.get('map', 'TBD')}`\n"
+        f"│  **Match 2:** `{m2.get('start', 'TBD')}` │ IDP `{m2.get('idp', 'TBD')}` │ Map `{m2.get('map', 'TBD')}`\n"
+        f"╰────────────────────────────╯\n\n"
+        f"Please join your group channel when it's available.\n"
+        f"🎱 **Best of luck 👊 for your matches!!**",
+        Theme.SUCCESS,
+        "Mack Bot Tortuga 🚀 2027 Edition"
+    )
+    await interaction.followup.send(embed=success, ephemeral=True)
+
+    # Refresh the roster in the group channel
+    await self._refresh_group_roster(interaction.guild, assigned_group, event_id)
+
+    # Refresh the slot availability embed in register channel
+    await self._refresh_slot_availability(interaction.guild, event_id)
+
+    # Post public receipt to #registered-teams log channel
+    await self._post_public_receipt(
+        interaction.guild, self.team_name, group_id,
+        self.players, self.player_uids, self.player_igns,
+        self.selected_members, event_date_display
+    )
+
+async def _refresh_group_roster(self, guild, group_doc, event_id):
+    """Update the live roster embed in the group channel."""
+    channel_id = group_doc.get("channel_id")
+    if not channel_id:
+        return
+
+    channel = guild.get_channel(channel_id)
+    if not channel:
+        return
+
+    regs = reg_model.get_group_registrations(group_doc["group_id"], event_id)
+    embed = build_roster_embed(group_doc, regs, group_doc["capacity"])
+
+    msg_id = group_doc.get("roster_message_id")
+    message = None
+    if msg_id:
+        try:
+            message = await channel.fetch_message(msg_id)
+            await message.edit(embed=embed)
+        except discord.NotFound:
+            message = None
+
+    if message is None:
+        message = await channel.send(embed=embed)
+        group_model.update_roster_message(event_id, group_doc["group_id"], message.id)
+
+async def _refresh_slot_availability(self, guild, event_id):
+    """Update the slot availability embed in the register channel."""
+    from database import get_channel_config, get_config, set_config
+
+    reg_channel_id = get_channel_config("register")
+    if not reg_channel_id:
+        return
+
+    channel = guild.get_channel(reg_channel_id)
+    if not channel:
+        return
+
+    all_groups = group_model.get_all_groups(event_id)
+    embed = build_registration_board_embed(all_groups)
+
+    # Try to find and edit the existing permanent board message
+    slot_msg_id = get_config("slot_message_id")
+    if slot_msg_id:
+        try:
+            msg = await channel.fetch_message(slot_msg_id)
+            await msg.edit(embed=embed)
+            return
+        except discord.NotFound:
+            pass
+
+    # Fallback: update event-specific message
+    avail_msg_id = get_config(f"slot_availability_msg_{event_id}")
+    if avail_msg_id:
+        try:
+            msg = await channel.fetch_message(avail_msg_id)
+            await msg.edit(embed=embed)
+            return
+        except discord.NotFound:
+            pass
+
+async def _post_public_receipt(self, guild, team_name, group_id, players,
+                                player_uids, player_igns, members, date_display):
+    """Post a confirmation receipt to #registered-teams."""
+    from database import get_channel_config
+
+    log_channel_id = get_channel_config("registered_teams")
+    if not log_channel_id:
+        return
+
+    channel = guild.get_channel(log_channel_id)
+    if not channel:
+        return
+
+    embed = build_registration_receipt_embed(
+        team_name, group_id, players, player_uids,
+        player_igns, members, date_display
+    )
+    await channel.send(embed=embed)
+```
+
+class TeammateSelect(ui.UserSelect):
+“”“Dropdown to select 4 to 5 squad members.”””
+
+```
+def __init__(self, team_name, players, player_uids=None, player_igns=None):
+    self.team_name = team_name
+    self.players = players
+    self.player_uids = player_uids or []
+    self.player_igns = player_igns or []
+    super().__init__(
+        placeholder="Select your 4-5 teammates",
+        min_values=4,
+        max_values=5
+    )
+
+async def callback(self, interaction: discord.Interaction):
+    members = self.values
+    owner_id = str(interaction.user.id)
+    event_id = get_today_event_id()
+
+    # Validation: must include yourself
+    if interaction.user not in members:
+        await interaction.response.send_message(
+            embed=error_embed(
+                "⛔ Selection Error",
+                f"{Theme.SEP}\n\nYou must **include yourself** in the squad selection.\n"
+                f"*➤ Select yourself plus your teammates.*\n\n{Theme.SEP}"
+            ),
+            ephemeral=True
+        )
+        return
+
+    # Validation: no bots
+    bots = [m.mention for m in members if m.bot]
+    if bots:
+        await interaction.response.send_message(
+            embed=error_embed(
+                "⛔ Selection Error",
+                f"{Theme.SEP}\n\nBots cannot be squad members:\n\n" +
+                "\n".join([f"  ⚠️ {b}" for b in bots]) +
+                f"\n\n*➤ Select only real players.*\n\n{Theme.SEP}"
+            ),
+            ephemeral=True
+        )
+        return
+
+    # Validation: check if any teammate is already registered today
+    for m in members:
+        is_reg, existing_team = reg_model.is_teammate_registered(str(m.id), event_id)
+        if is_reg:
+            await interaction.response.send_message(
+                embed=error_embed(
+                    "⛔ Already Registered",
+                    f"{Theme.SEP}\n\n"
+                    f"{m.mention} is already registered in team **{existing_team}** for today.\n"
+                    f"Each player can only be in one team per day.\n\n{Theme.SEP}"
+                ),
+                ephemeral=True
+            )
+            return
+
+    # Check if groups are available
+    available_groups = group_model.get_open_groups(event_id)
+    if not available_groups:
+        await interaction.response.send_message(
+            embed=error_embed(
+                "❌ All Groups Full",
+                f"{Theme.SEP}\n\n"
+                f"All groups for today are **completely full**!\n"
+                f"Please wait for an admin to add more groups.\n\n{Theme.SEP}"
+            ),
+            ephemeral=True
+        )
+        return
+
+    # Send confirmation button response
+    confirm_view = ConfirmRegistrationView(
+        self.team_name, self.players, members,
+        self.player_uids, self.player_igns
+    )
+    await interaction.response.send_message(
+        content="Teammates selected. Click the button below to Finalize Registration.",
+        view=confirm_view,
+        ephemeral=True
+    )
+```
 
 class TeammateSelectView(ui.View):
-    """View containing the teammate select dropdown."""
+“”“View containing the teammate select dropdown.”””
 
-    def __init__(self, team_name, players, player_uids=None, player_igns=None):
-        super().__init__(timeout=120)
-        self.add_item(TeammateSelect(team_name, players, player_uids, player_igns))
-
+```
+def __init__(self, team_name, players, player_uids=None, player_igns=None):
+    super().__init__(timeout=120)
+    self.add_item(TeammateSelect(team_name, players, player_uids, player_igns))
+```
 
 # ═══════════════════ SAVED PROFILE VIEWS ═══════════════════
 
 class SavedProfileView(ui.View):
-    """Shown when a returning player has a saved team profile within 30 days."""
+“”“Shown when a returning player has a saved team profile within 30 days.”””
 
-    def __init__(self, profile):
-        super().__init__(timeout=120)
-        self.profile = profile
+```
+def __init__(self, profile):
+    super().__init__(timeout=120)
+    self.profile = profile
 
-    @ui.button(label="Use Old Team", style=discord.ButtonStyle.secondary, emoji="📂", row=0)
-    async def use_saved(self, interaction: discord.Interaction, button: ui.Button):
-        """Use saved profile → skip Modal 1 & 2, go straight to teammate selection."""
-        team_name = self.profile["team_name"]
-        players = self.profile.get("players", [])
-        player_uids = self.profile.get("player_uids", [])
-        player_igns = self.profile.get("player_igns", [])
+@ui.button(label="Use Old Team", style=discord.ButtonStyle.secondary, emoji="📂", row=0)
+async def use_saved(self, interaction: discord.Interaction, button: ui.Button):
+    """Use saved profile → skip Modal 1 & 2, go straight to teammate selection."""
+    team_name = self.profile["team_name"]
+    players = self.profile.get("players", [])
+    player_uids = self.profile.get("player_uids", [])
+    player_igns = self.profile.get("player_igns", [])
 
-        # Show teammate selection with saved data
-        uid_display = ""
-        if player_uids and player_igns:
-            lines = [f"  │  ✦ `{player_uids[i]}` — {player_igns[i]}" for i in range(min(len(player_uids), len(player_igns)))]
-            uid_display = "\n".join(lines)
-        else:
-            uid_display = "\n".join([f"  │  ✦ {p}" for p in players])
+    # Show teammate selection with saved data
+    uid_display = ""
+    if player_uids and player_igns:
+        lines = [f"  │  ✦ `{player_uids[i]}` — {player_igns[i]}" for i in range(min(len(player_uids), len(player_igns)))]
+        uid_display = "\n".join(lines)
+    else:
+        uid_display = "\n".join([f"  │  ✦ {p}" for p in players])
 
-        embed = make_embed(
-            "👥 Final Step: Select Teammates",
-            f"Your team **{team_name}** has been loaded successfully!\n\n"
-            f"╭── 📋 **Roster** ──╮\n{uid_display}\n╰───────────────────╯\n\n"
-            f"{Theme.THIN_SEP}\n"
-            f"**Next:** Select your **4 to 5 squad members** from the dropdown below.\n"
-            f"You must include yourself.",
-            Theme.ACCENT,
-            "Step 3 of 3 — Select teammates"
-        )
-        await interaction.response.send_message(
-            embed=embed,
-            view=TeammateSelectView(team_name, players, player_uids, player_igns),
-            ephemeral=True
-        )
+    embed = make_embed(
+        "👥 Final Step: Select Teammates",
+        f"Your team **{team_name}** has been loaded successfully!\n\n"
+        f"╭── 📋 **Roster** ──╮\n{uid_display}\n╰───────────────────╯\n\n"
+        f"{Theme.THIN_SEP}\n"
+        f"**Next:** Select your **4 to 5 squad members** from the dropdown below.\n"
+        f"You must include yourself.",
+        Theme.ACCENT,
+        "Step 3 of 3 — Select teammates"
+    )
+    await interaction.response.send_message(
+        embed=embed,
+        view=TeammateSelectView(team_name, players, player_uids, player_igns),
+        ephemeral=True
+    )
 
-    @ui.button(label="Edit Team", style=discord.ButtonStyle.secondary, emoji="✏️", row=0)
-    async def edit_team(self, interaction: discord.Interaction, button: ui.Button):
-        """Edit → opens Modal 1 pre-filled with saved data."""
-        prefill = {
-            "team_name": self.profile.get("team_name", ""),
-            "owner_name": self.profile.get("owner_name", ""),
-            "email": self.profile.get("email", ""),
-            "contact": self.profile.get("contact", ""),
-        }
-        modal = TeamInfoModal(prefill=prefill)
-        modal._is_edit = True
-        await interaction.response.send_modal(modal)
+@ui.button(label="Edit Team", style=discord.ButtonStyle.secondary, emoji="✏️", row=0)
+async def edit_team(self, interaction: discord.Interaction, button: ui.Button):
+    """Edit → opens Modal 1 pre-filled with saved data."""
+    prefill = {
+        "team_name": self.profile.get("team_name", ""),
+        "owner_name": self.profile.get("owner_name", ""),
+        "email": self.profile.get("email", ""),
+        "contact": self.profile.get("contact", ""),
+    }
+    modal = TeamInfoModal(prefill=prefill)
+    modal._is_edit = True
+    await interaction.response.send_modal(modal)
 
-    @ui.button(label="New Team", style=discord.ButtonStyle.secondary, emoji="✨", row=1)
-    async def new_team(self, interaction: discord.Interaction, button: ui.Button):
-        """New → wipes old data, opens blank Modal 1."""
-        # Delete old profile
-        owner_id = str(interaction.user.id)
-        team_profile.delete_profile(owner_id)
-        await interaction.response.send_modal(TeamInfoModal())
-
+@ui.button(label="New Team", style=discord.ButtonStyle.secondary, emoji="✨", row=1)
+async def new_team(self, interaction: discord.Interaction, button: ui.Button):
+    """New → wipes old data, opens blank Modal 1."""
+    # Delete old profile
+    owner_id = str(interaction.user.id)
+    team_profile.delete_profile(owner_id)
+    await interaction.response.send_modal(TeamInfoModal())
+```
 
 # ═══════════════════ PERSISTENT REGISTER BUTTON ═══════════════════
 
 class PersistentRegisterView(ui.View):
-    """The always-alive Register button posted in #register-here."""
+“”“The always-alive Register button posted in #register-here.”””
 
-    def __init__(self, locked=False):
-        super().__init__(timeout=None)
-        self.clear_items()
+```
+def __init__(self, locked=False):
+    super().__init__(timeout=None)
+    self.clear_items()
 
-        if locked:
-            btn = ui.Button(
-                label="🔒 Registration Closed",
-                style=discord.ButtonStyle.secondary,
-                custom_id="mack_register_btn",
-                disabled=True
-            )
-            self.add_item(btn)
+    if locked:
+        btn = ui.Button(
+            label="🔒 Registration Closed",
+            style=discord.ButtonStyle.secondary,
+            custom_id="tortuga_register_btn",
+            disabled=True
+        )
+        self.add_item(btn)
+    else:
+        btn = ui.Button(
+            label="📥 Register Team",
+            style=discord.ButtonStyle.green,
+            custom_id="tortuga_register_btn",
+        )
+        btn.callback = self._register_callback
+        self.add_item(btn)
+
+async def _register_callback(self, interaction: discord.Interaction):
+    owner_id = str(interaction.user.id)
+    event_id = get_today_event_id()
+
+    # Check if banned
+    is_ban, ban_doc = punishment.is_banned(owner_id)
+    if is_ban:
+        reason = ban_doc.get("reason", "No reason provided")
+        exp = ban_doc.get("expires_at", "Unknown")
+        if exp == "never":
+            exp_display = "Permanent"
         else:
-            btn = ui.Button(
-                label="📥 Register Team",
-                style=discord.ButtonStyle.green,
-                custom_id="mack_register_btn",
-            )
-            btn.callback = self._register_callback
-            self.add_item(btn)
+            try:
+                exp_dt = datetime.datetime.fromisoformat(exp) + datetime.timedelta(hours=TIMEZONE_OFFSET)
+                exp_display = exp_dt.strftime("%Y-%m-%d %I:%M %p")
+            except Exception:
+                exp_display = exp
 
-    async def _register_callback(self, interaction: discord.Interaction):
-        owner_id = str(interaction.user.id)
-        event_id = get_today_event_id()
+        await interaction.response.send_message(
+            embed=make_embed(
+                "⛔ Access Denied — Banned",
+                f"You are currently **banned** from scrims.\n\n"
+                f"╭── 🔨 **Ban Details** ──╮\n"
+                f"│  📝 **Reason:** {reason}\n"
+                f"│  ⏳ **Expires:** `{exp_display}`\n"
+                f"╰────────────────────────╯\n\n"
+                f"*If you believe this is an error, contact an admin.*",
+                Theme.ERROR
+            ),
+            ephemeral=True
+        )
+        return
 
-        # Check if banned
-        is_ban, ban_doc = punishment.is_banned(owner_id)
-        if is_ban:
-            reason = ban_doc.get("reason", "No reason provided")
-            exp = ban_doc.get("expires_at", "Unknown")
-            if exp == "never":
-                exp_display = "Permanent"
-            else:
-                try:
-                    exp_dt = datetime.datetime.fromisoformat(exp) + datetime.timedelta(hours=TIMEZONE_OFFSET)
-                    exp_display = exp_dt.strftime("%Y-%m-%d %I:%M %p")
-                except Exception:
-                    exp_display = exp
-
-            await interaction.response.send_message(
-                embed=make_embed(
-                    "⛔ Access Denied — Banned",
-                    f"You are currently **banned** from scrims.\n\n"
-                    f"╭── 🔨 **Ban Details** ──╮\n"
-                    f"│  📝 **Reason:** {reason}\n"
-                    f"│  ⏳ **Expires:** `{exp_display}`\n"
-                    f"╰────────────────────────╯\n\n"
-                    f"*If you believe this is an error, contact an admin.*",
-                    Theme.ERROR
-                ),
-                ephemeral=True
-            )
-            return
-
-        # Check if already registered today
-        existing = reg_model.get_registration(owner_id, event_id)
-        if existing:
-            group_id = existing.get("group_id", "???")
-            team_name = existing.get("team_name", "???")
-            await interaction.response.send_message(
-                embed=make_embed(
-                    "⚠️ Already Registered",
-                    f"You're already registered for today!\n\n"
-                    f"╭── 📋 **Your Registration** ──╮\n"
-                    f"│  🏷️ **Team:** `{team_name}`\n"
-                    f"│  📍 **Group:** `{group_id}`\n"
-                    f"╰────────────────────────────╯\n\n"
-                    f"*Use the Cancel/Change buttons in your group channel if needed.*",
-                    Theme.WARNING
-                ),
-                ephemeral=True
-            )
-            return
-
-        # Check if groups are provisioned
-        available = group_model.get_open_groups(event_id)
-        all_groups = group_model.get_all_groups(event_id)
-        if not all_groups:
-            await interaction.response.send_message(
-                embed=error_embed(
-                    "❌ No Groups Available",
-                    f"{Theme.SEP}\n\n"
-                    f"Today's scrims haven't been set up yet.\n"
-                    f"An admin needs to run the provisioning command first.\n\n{Theme.SEP}"
-                ),
-                ephemeral=True
-            )
-            return
-
-        if not available:
-            await interaction.response.send_message(
-                embed=error_embed(
-                    "❌ All Groups Full",
-                    f"{Theme.SEP}\n\n"
-                    f"All groups for today are completely full!\n"
-                    f"Please wait for an admin to add more groups.\n\n{Theme.SEP}"
-                ),
-                ephemeral=True
-            )
-            return
-
-        # "Already Registered" Intercept — check for saved profile (30-day memory)
-        profile = team_profile.get_profile(owner_id)
-        if profile:
-            # Condition B: Valid profile exists within 30 days
-            team_name = profile.get("team_name", "Unknown")
-            owner_name = profile.get("owner_name", "")
-            player_count = len(profile.get("players", []))
-
-            embed = make_embed(
-                "👋 Welcome Back!",
-                f"I found a saved profile for you.\n\n"
-                f"╭── 📋 **Saved Profile** ──╮\n"
+    # Check if already registered today
+    existing = reg_model.get_registration(owner_id, event_id)
+    if existing:
+        group_id = existing.get("group_id", "???")
+        team_name = existing.get("team_name", "???")
+        await interaction.response.send_message(
+            embed=make_embed(
+                "⚠️ Already Registered",
+                f"You're already registered for today!\n\n"
+                f"╭── 📋 **Your Registration** ──╮\n"
                 f"│  🏷️ **Team:** `{team_name}`\n"
-                f"│  👤 **Owner:** `{owner_name}`\n"
-                f"│  👥 **Players:** `{player_count}`\n"
-                f"╰───────────────────────╯\n\n"
-                f"Choose an option below:",
-                Theme.ACCENT,
-                "Profile found — 30-day memory"
-            )
-            await interaction.response.send_message(
-                embed=embed,
-                view=SavedProfileView(profile),
-                ephemeral=True
-            )
-        else:
-            # Condition A: New user or expired — open Modal 1 immediately
-            await interaction.response.send_modal(TeamInfoModal())
+                f"│  📍 **Group:** `{group_id}`\n"
+                f"╰────────────────────────────╯\n\n"
+                f"*Use the Cancel/Change buttons in your group channel if needed.*",
+                Theme.WARNING
+            ),
+            ephemeral=True
+        )
+        return
 
+    # Check if groups are provisioned
+    available = group_model.get_open_groups(event_id)
+    all_groups = group_model.get_all_groups(event_id)
+    if not all_groups:
+        await interaction.response.send_message(
+            embed=error_embed(
+                "❌ No Groups Available",
+                f"{Theme.SEP}\n\n"
+                f"Today's scrims haven't been set up yet.\n"
+                f"An admin needs to run the provisioning command first.\n\n{Theme.SEP}"
+            ),
+            ephemeral=True
+        )
+        return
+
+    if not available:
+        await interaction.response.send_message(
+            embed=error_embed(
+                "❌ All Groups Full",
+                f"{Theme.SEP}\n\n"
+                f"All groups for today are completely full!\n"
+                f"Please wait for an admin to add more groups.\n\n{Theme.SEP}"
+            ),
+            ephemeral=True
+        )
+        return
+
+    # "Already Registered" Intercept — check for saved profile (30-day memory)
+    profile = team_profile.get_profile(owner_id)
+    if profile:
+        # Condition B: Valid profile exists within 30 days
+        team_name = profile.get("team_name", "Unknown")
+        owner_name = profile.get("owner_name", "")
+        player_count = len(profile.get("players", []))
+
+        embed = make_embed(
+            "👋 Welcome Back!",
+            f"I found a saved profile for you.\n\n"
+            f"╭── 📋 **Saved Profile** ──╮\n"
+            f"│  🏷️ **Team:** `{team_name}`\n"
+            f"│  👤 **Owner:** `{owner_name}`\n"
+            f"│  👥 **Players:** `{player_count}`\n"
+            f"╰───────────────────────╯\n\n"
+            f"Choose an option below:",
+            Theme.ACCENT,
+            "Profile found — 30-day memory"
+        )
+        await interaction.response.send_message(
+            embed=embed,
+            view=SavedProfileView(profile),
+            ephemeral=True
+        )
+    else:
+        # Condition A: New user or expired — open Modal 1 immediately
+        await interaction.response.send_modal(TeamInfoModal())
+```
 
 # ═══════════════════ COG ═══════════════════
 
 class RegistrationCog(commands.Cog):
-    """Handles team registration flow."""
+“”“Handles team registration flow.”””
 
-    def __init__(self, bot):
-        self.bot = bot
+```
+def __init__(self, bot):
+    self.bot = bot
 
-    async def cog_load(self):
-        """Register persistent views on cog load."""
-        self.bot.add_view(PersistentRegisterView(locked=False))
-        self.bot.add_view(PersistentRegisterView(locked=True))
+async def cog_load(self):
+    """Register persistent views on cog load."""
+    self.bot.add_view(PersistentRegisterView(locked=False))
+    self.bot.add_view(PersistentRegisterView(locked=True))
 
-    # ─────────────── /setup COMMAND ───────────────
+# ─────────────── /setup COMMAND ───────────────
 
-    @app_commands.command(
-        name="setup",
-        description="[Admin] Drop the permanent registration board and button in #register-here"
-    )
-    @app_commands.describe(
-        channel="The #register-here channel to set up"
-    )
-    @app_commands.checks.has_permissions(administrator=True)
-    async def setup_cmd(self, interaction: discord.Interaction, channel: discord.TextChannel):
-        """Setup command: drops the permanent Slot Embed and Register buttons."""
-        from database import set_config, set_channel_config
+@app_commands.command(
+    name="setup",
+    description="[Admin] Drop the permanent registration board and button in #register-here"
+)
+@app_commands.describe(
+    channel="The #register-here channel to set up"
+)
+@app_commands.checks.has_permissions(administrator=True)
+async def setup_cmd(self, interaction: discord.Interaction, channel: discord.TextChannel):
+    """Setup command: drops the permanent Slot Embed and Register buttons."""
+    from database import set_config, set_channel_config
 
-        await interaction.response.defer(ephemeral=True)
+    await interaction.response.defer(ephemeral=True)
 
-        # Set channel permissions: @everyone -> Send Messages ❌
-        try:
-            await channel.set_permissions(
-                interaction.guild.default_role,
-                send_messages=False,
-                read_messages=True,
-                read_message_history=True
-            )
-        except discord.Forbidden:
-            await interaction.followup.send(
-                embed=error_embed("❌ Permission Error", "I don't have permission to modify channel settings."),
-                ephemeral=True
-            )
-            return
-
-        # Ensure bot can send messages
-        try:
-            await channel.set_permissions(
-                interaction.guild.me,
-                send_messages=True,
-                embed_links=True,
-                read_message_history=True,
-                manage_messages=True
-            )
-        except discord.Forbidden:
-            pass
-
-        # Build and send the permanent registration board
-        event_id = get_today_event_id()
-        all_groups = group_model.get_all_groups(event_id)
-        embed = build_registration_board_embed(all_groups)
-
-        view = PersistentRegisterView(locked=False)
-        msg = await channel.send(embed=embed, view=view)
-
-        # Save the message ID and channel config
-        set_config("slot_message_id", msg.id)
-        set_channel_config("register", channel.id)
-
+    # Set channel permissions: @everyone -> Send Messages ❌
+    try:
+        await channel.set_permissions(
+            interaction.guild.default_role,
+            send_messages=False,
+            read_messages=True,
+            read_message_history=True
+        )
+    except discord.Forbidden:
         await interaction.followup.send(
-            embed=success_embed(
-                "✅ Registration Board Deployed!",
-                f"Permanent registration embed + button posted in {channel.mention}.\n\n"
-                f"**Message ID saved:** `{msg.id}`\n"
-                f"**Channel locked:** @everyone Send Messages ❌"
+            embed=error_embed("❌ Permission Error", "I don't have permission to modify channel settings."),
+            ephemeral=True
+        )
+        return
+
+    # Ensure bot can send messages
+    try:
+        await channel.set_permissions(
+            interaction.guild.me,
+            send_messages=True,
+            embed_links=True,
+            read_message_history=True,
+            manage_messages=True
+        )
+    except discord.Forbidden:
+        pass
+
+    # Build and send the permanent registration board
+    event_id = get_today_event_id()
+    all_groups = group_model.get_all_groups(event_id)
+    embed = build_registration_board_embed(all_groups)
+
+    view = PersistentRegisterView(locked=False)
+    msg = await channel.send(embed=embed, view=view)
+
+    # Save the message ID and channel config
+    set_config("slot_message_id", msg.id)
+    set_channel_config("register", channel.id)
+
+    await interaction.followup.send(
+        embed=success_embed(
+            "✅ Registration Board Deployed!",
+            f"Permanent registration embed + button posted in {channel.mention}.\n\n"
+            f"**Message ID saved:** `{msg.id}`\n"
+            f"**Channel locked:** @everyone Send Messages ❌"
+        ),
+        ephemeral=True
+    )
+
+# ─────────────── /register SLASH COMMAND ───────────────
+
+@app_commands.command(name="register", description="Register your team for today's scrims")
+async def register_slash(self, interaction: discord.Interaction):
+    """Slash command alternative to the button — opens Modal 1."""
+    owner_id = str(interaction.user.id)
+    event_id = get_today_event_id()
+
+    # Check ban
+    is_ban, _ = punishment.is_banned(owner_id)
+    if is_ban:
+        await interaction.response.send_message(
+            embed=error_embed("⛔ Banned", "You are banned from scrims."),
+            ephemeral=True
+        )
+        return
+
+    # Check already registered
+    existing = reg_model.get_registration(owner_id, event_id)
+    if existing:
+        await interaction.response.send_message(
+            embed=error_embed("⚠️ Already Registered", "You're already registered for today."),
+            ephemeral=True
+        )
+        return
+
+    # Check saved profile
+    profile = team_profile.get_profile(owner_id)
+    if profile:
+        embed = make_embed(
+            "👋 Welcome Back!",
+            f"I found a saved profile for **{profile.get('team_name', '?')}**.\nChoose an option:",
+            Theme.ACCENT
+        )
+        await interaction.response.send_message(
+            embed=embed,
+            view=SavedProfileView(profile),
+            ephemeral=True
+        )
+    else:
+        await interaction.response.send_modal(TeamInfoModal())
+
+# ─────────────── /myteam COMMAND ───────────────
+
+@app_commands.command(name="myteam", description="View your team info and today's registration")
+async def my_team(self, interaction: discord.Interaction):
+    """View current team profile and today's registration."""
+    owner_id = str(interaction.user.id)
+    event_id = get_today_event_id()
+
+    profile = team_profile.get_profile(owner_id)
+    reg = reg_model.get_registration(owner_id, event_id)
+
+    if not profile and not reg:
+        await interaction.response.send_message(
+            embed=error_embed(
+                "❌ No Team Found",
+                f"You haven't registered a team yet.\n"
+                f"Use the Register button or `/register` to get started!"
             ),
             ephemeral=True
         )
+        return
 
-    # ─────────────── /register SLASH COMMAND ───────────────
+    # Build profile info
+    desc_parts = []
+    if profile:
+        players = profile.get("players", [])
+        player_uids = profile.get("player_uids", [])
+        player_igns = profile.get("player_igns", [])
+        owner_name = profile.get("owner_name", "")
 
-    @app_commands.command(name="register", description="Register your team for today's scrims")
-    async def register_slash(self, interaction: discord.Interaction):
-        """Slash command alternative to the button — opens Modal 1."""
-        owner_id = str(interaction.user.id)
-        event_id = get_today_event_id()
-
-        # Check ban
-        is_ban, _ = punishment.is_banned(owner_id)
-        if is_ban:
-            await interaction.response.send_message(
-                embed=error_embed("⛔ Banned", "You are banned from scrims."),
-                ephemeral=True
-            )
-            return
-
-        # Check already registered
-        existing = reg_model.get_registration(owner_id, event_id)
-        if existing:
-            await interaction.response.send_message(
-                embed=error_embed("⚠️ Already Registered", "You're already registered for today."),
-                ephemeral=True
-            )
-            return
-
-        # Check saved profile
-        profile = team_profile.get_profile(owner_id)
-        if profile:
-            embed = make_embed(
-                "👋 Welcome Back!",
-                f"I found a saved profile for **{profile.get('team_name', '?')}**.\nChoose an option:",
-                Theme.ACCENT
-            )
-            await interaction.response.send_message(
-                embed=embed,
-                view=SavedProfileView(profile),
-                ephemeral=True
-            )
+        if player_uids and player_igns:
+            roster_text = "\n".join([
+                f"  │  ✦ `{player_uids[i]}` — {player_igns[i]}"
+                for i in range(min(len(player_uids), len(player_igns)))
+            ])
         else:
-            await interaction.response.send_modal(TeamInfoModal())
+            roster_text = "\n".join([f"  │  ✦ {p}" for p in players])
 
-    # ─────────────── /myteam COMMAND ───────────────
+        expires = profile.get("expires_at", "")
+        exp_display = ""
+        if expires:
+            try:
+                exp_dt = datetime.datetime.fromisoformat(expires)
+                exp_display = f"\n│  ⏳ **Expires:** `{exp_dt.strftime('%Y-%m-%d')}`"
+            except Exception:
+                pass
 
-    @app_commands.command(name="myteam", description="View your team info and today's registration")
-    async def my_team(self, interaction: discord.Interaction):
-        """View current team profile and today's registration."""
-        owner_id = str(interaction.user.id)
-        event_id = get_today_event_id()
-
-        profile = team_profile.get_profile(owner_id)
-        reg = reg_model.get_registration(owner_id, event_id)
-
-        if not profile and not reg:
-            await interaction.response.send_message(
-                embed=error_embed(
-                    "❌ No Team Found",
-                    f"You haven't registered a team yet.\n"
-                    f"Use the Register button or `/register` to get started!"
-                ),
-                ephemeral=True
-            )
-            return
-
-        # Build profile info
-        desc_parts = []
-        if profile:
-            players = profile.get("players", [])
-            player_uids = profile.get("player_uids", [])
-            player_igns = profile.get("player_igns", [])
-            owner_name = profile.get("owner_name", "")
-
-            if player_uids and player_igns:
-                roster_text = "\n".join([
-                    f"  │  ✦ `{player_uids[i]}` — {player_igns[i]}"
-                    for i in range(min(len(player_uids), len(player_igns)))
-                ])
-            else:
-                roster_text = "\n".join([f"  │  ✦ {p}" for p in players])
-
-            expires = profile.get("expires_at", "")
-            exp_display = ""
-            if expires:
-                try:
-                    exp_dt = datetime.datetime.fromisoformat(expires)
-                    exp_display = f"\n│  ⏳ **Expires:** `{exp_dt.strftime('%Y-%m-%d')}`"
-                except Exception:
-                    pass
-
-            desc_parts.append(
-                f"╭── 👥 **Saved Profile** ──╮\n"
-                f"│  🏷️ **Team:** `{profile.get('team_name', '?')}`\n"
-                f"│  👤 **Owner:** `{owner_name}`{exp_display}\n"
-                f"│\n{roster_text}\n╰───────────────────────╯"
-            )
-
-        if reg:
-            group_id = reg.get("group_id", "???")
-            status = reg.get("status", "registered")
-            status_icon = "🟢" if status == "registered" else "🔴"
-            desc_parts.append(
-                f"╭── 📅 **Today's Registration** ──╮\n"
-                f"│  📍 **Group:** `{group_id}`\n"
-                f"│  📊 **Status:** {status_icon} `{status.upper()}`\n"
-                f"╰────────────────────────────────╯"
-            )
-        else:
-            desc_parts.append("\n*Not registered for today yet.*")
-
-        embed = make_embed(
-            f"🏷️ My Team",
-            "\n\n".join(desc_parts),
-            Theme.TEAL
+        desc_parts.append(
+            f"╭── 👥 **Saved Profile** ──╮\n"
+            f"│  🏷️ **Team:** `{profile.get('team_name', '?')}`\n"
+            f"│  👤 **Owner:** `{owner_name}`{exp_display}\n"
+            f"│\n{roster_text}\n╰───────────────────────╯"
         )
-        await interaction.response.send_message(embed=embed, ephemeral=True)
 
+    if reg:
+        group_id = reg.get("group_id", "???")
+        status = reg.get("status", "registered")
+        status_icon = "🟢" if status == "registered" else "🔴"
+        desc_parts.append(
+            f"╭── 📅 **Today's Registration** ──╮\n"
+            f"│  📍 **Group:** `{group_id}`\n"
+            f"│  📊 **Status:** {status_icon} `{status.upper()}`\n"
+            f"╰────────────────────────────────╯"
+        )
+    else:
+        desc_parts.append("\n*Not registered for today yet.*")
+
+    embed = make_embed(
+        f"🏷️ My Team",
+        "\n\n".join(desc_parts),
+        Theme.TEAL
+    )
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+```
 
 async def setup(bot):
-    await bot.add_cog(RegistrationCog(bot))
+await bot.add_cog(RegistrationCog(bot))
