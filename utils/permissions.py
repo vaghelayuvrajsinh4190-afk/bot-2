@@ -1,5 +1,5 @@
 """
-Mack Bot Tortuga — Permission Utilities
+Mack Bot — Permission Utilities
 Helper functions for managing Discord roles and channel permissions.
 """
 

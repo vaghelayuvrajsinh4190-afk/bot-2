@@ -1,5 +1,5 @@
 """
-Mack Bot Tortuga — Group Model
+Mack Bot — Group Model
 CRUD operations for daily groups.
 Groups are pre-created by the provisioning job and filled atomically.
 """

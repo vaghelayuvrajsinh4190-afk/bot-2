@@ -1,7 +1,6 @@
 """
-Mack Bot Tortuga — Reminders Cog
+Mack Bot — Reminders Cog
 Handles match reminders, cancel/reschedule buttons, auto-lock, and slot list publishing.
-Phase 4 of the upgrade plan.
 """
 
 import datetime

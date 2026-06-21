@@ -1,5 +1,5 @@
 """
-Mack Bot Tortuga — Registration Cog
+Mack Bot — Registration Cog
 Handles the full registration flow:
   - /setup command (permanent embed + register button)
   - 30-Day "Already Registered" intercept
@@ -357,7 +357,7 @@ class ConfirmRegistrationView(ui.View):
             f"Please join your group channel when it's available.\n"
             f"🎱 **Best of luck 👊 for your matches!!**",
             Theme.SUCCESS,
-            "Mack Bot Tortuga 🚀 2027 Edition"
+            "Mack Bot 🚀 2027 Edition"
         )
         await interaction.followup.send(embed=success, ephemeral=True)
 

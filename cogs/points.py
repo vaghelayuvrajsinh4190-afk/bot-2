@@ -1,7 +1,6 @@
 """
-Mack Bot Tortuga — Points & Leaderboard Cog
+Mack Bot — Points & Leaderboard Cog
 Slash commands for setpoints, setposition, addresult, matchresults, leaderboard, mvp, resetresults, and postleaderboard.
-Phase 6 of the upgrade plan.
 """
 
 import datetime

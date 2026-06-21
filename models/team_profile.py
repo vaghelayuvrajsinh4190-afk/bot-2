@@ -1,5 +1,5 @@
 """
-Mack Bot Tortuga — Team Profile Model
+Mack Bot — Team Profile Model
 CRUD operations for saved team profiles.
 Teams persist for 30 days so returning players can reuse them.
 """

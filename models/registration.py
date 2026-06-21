@@ -1,5 +1,5 @@
 """
-Mack Bot Tortuga — Registration Model
+Mack Bot — Registration Model
 CRUD operations for daily team registrations.
 Each registration links a team to a group for one day's event.
 """

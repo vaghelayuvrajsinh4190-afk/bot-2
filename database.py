@@ -1,5 +1,5 @@
 """
-Mack Bot Tortuga — Database Connection & Collections
+Mack Bot — Database Connection & Collections
 Handles MongoDB connection, collection references, and index creation.
 """
 

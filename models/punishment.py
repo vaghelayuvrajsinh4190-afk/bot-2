@@ -1,5 +1,5 @@
 """
-Mack Bot Tortuga — Punishment Model
+Mack Bot — Punishment Model
 CRUD operations for bans, strikes, and punishments.
 """
 

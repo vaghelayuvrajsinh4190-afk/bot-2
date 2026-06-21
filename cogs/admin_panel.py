@@ -1,5 +1,5 @@
 """
-Mack Bot Tortuga — Admin Panel Cog
+Mack Bot — Admin Panel Cog
 Contains:
   - GroupControlPanelView: 3-row persistent panel in every group channel
   - /panel command for admin overview

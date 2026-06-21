@@ -1,5 +1,5 @@
 """
-Mack Bot Tortuga — Keep Alive Server
+Mack Bot — Keep Alive Server
 HTTP server to keep the bot alive on hosting platforms like Replit/Render.
 Includes /health endpoint for monitoring.
 UptimeRobot pings this every 5 minutes to bypass 15-minute sleep timers.
@@ -26,7 +26,7 @@ class KeepAliveHandler(BaseHTTPRequestHandler):
 
             health_data = {
                 "status": "healthy",
-                "bot": "Mack Bot Tortuga",
+                "bot": "Mack Bot",
                 "uptime": f"{hours}h {minutes}m {seconds}s",
                 "uptime_seconds": uptime_seconds,
                 "version": "2027 Edition"
@@ -48,7 +48,7 @@ class KeepAliveHandler(BaseHTTPRequestHandler):
 
             html = (
                 f"<html><body style='background:#18191c;color:#2efc67;font-family:monospace;padding:40px;'>"
-                f"<h1>🚀 Mack Bot Tortuga</h1>"
+                f"<h1>🚀 Mack Bot</h1>"
                 f"<p>✅ Bot is alive and running!</p>"
                 f"<p>⏱️ Uptime: {hours}h {minutes}m</p>"
                 f"<p>🛡️ Anti-crash: Active</p>"

@@ -1,5 +1,5 @@
 """
-Mack Bot Tortuga — Provisioning Cog
+Mack Bot — Provisioning Cog
 Handles the full autopilot system:
   - Midnight Reset: cleanup, board reset, lock registration, auto-provision
   - Registration Open: 10 AM IST unlock
@@ -267,8 +267,132 @@ class ProvisioningCog(commands.Cog):
 
     # ═══════════════════ AUTO-PROVISION ═══════════════════
 
+    async def ensure_setup_channels(self, guild, event_id):
+        """
+        Ensure registration, logs, and receipt channels are created and configured.
+        Deploys the registration board automatically if it doesn't exist.
+        """
+        from database import set_channel_config, set_config
+
+        # 1. Ensure register channel
+        reg_channel_id = get_channel_config("register")
+        reg_channel = guild.get_channel(reg_channel_id) if reg_channel_id else None
+
+        if not reg_channel:
+            reg_channel = discord.utils.get(guild.text_channels, name="register-here")
+            if not reg_channel:
+                reg_channel = discord.utils.get(guild.text_channels, name="register")
+            if not reg_channel:
+                try:
+                    reg_channel = await guild.create_text_channel(
+                        name="register-here",
+                        topic="📥 Register here for today's scrims!"
+                    )
+                except Exception as e:
+                    print(f"❌ Failed to create register channel: {e}", flush=True)
+
+            if reg_channel:
+                set_channel_config("register", reg_channel.id)
+
+        # Configure register channel permissions (disable sending messages for @everyone)
+        if reg_channel:
+            try:
+                await reg_channel.set_permissions(
+                    guild.default_role,
+                    send_messages=False,
+                    read_messages=True,
+                    read_message_history=True
+                )
+                await reg_channel.set_permissions(
+                    guild.me,
+                    send_messages=True,
+                    embed_links=True,
+                    read_message_history=True,
+                    manage_messages=True
+                )
+            except Exception as e:
+                print(f"⚠️ Failed to set register channel permissions: {e}", flush=True)
+
+        # 2. Ensure registered-teams channel
+        teams_channel_id = get_channel_config("registered_teams")
+        teams_channel = guild.get_channel(teams_channel_id) if teams_channel_id else None
+
+        if not teams_channel:
+            teams_channel = discord.utils.get(guild.text_channels, name="registered-teams")
+            if not teams_channel:
+                try:
+                    teams_channel = await guild.create_text_channel(
+                        name="registered-teams",
+                        topic="📋 Live team registration receipts"
+                    )
+                except Exception as e:
+                    print(f"❌ Failed to create registered-teams channel: {e}", flush=True)
+
+            if teams_channel:
+                set_channel_config("registered_teams", teams_channel.id)
+
+        # Configure registered-teams permissions: read-only for public
+        if teams_channel:
+            try:
+                await teams_channel.set_permissions(
+                    guild.default_role,
+                    send_messages=False,
+                    read_messages=True,
+                    read_message_history=True
+                )
+            except Exception as e:
+                print(f"⚠️ Failed to set registered-teams permissions: {e}", flush=True)
+
+        # 3. Ensure admin-log channel
+        log_channel_id = get_channel_config("admin_log")
+        log_channel = guild.get_channel(log_channel_id) if log_channel_id else None
+
+        if not log_channel:
+            log_channel = discord.utils.get(guild.text_channels, name="admin-log")
+            if not log_channel:
+                try:
+                    overwrites = {
+                        guild.default_role: discord.PermissionOverwrite(view_channel=False),
+                        guild.me: discord.PermissionOverwrite(view_channel=True, send_messages=True)
+                    }
+                    log_channel = await guild.create_text_channel(
+                        name="admin-log",
+                        topic="⚙️ Bot admin logs and audit trail",
+                        overwrites=overwrites
+                    )
+                except Exception as e:
+                    print(f"❌ Failed to create admin-log channel: {e}", flush=True)
+
+            if log_channel:
+                set_channel_config("admin_log", log_channel.id)
+
+        # 4. Ensure registration board message is posted in the register channel
+        if reg_channel:
+            slot_msg_id = get_config("slot_message_id")
+            board_msg = None
+            if slot_msg_id:
+                try:
+                    board_msg = await reg_channel.fetch_message(slot_msg_id)
+                except Exception:
+                    board_msg = None
+
+            if not board_msg:
+                # Post the board
+                all_groups = group_model.get_all_groups(event_id)
+                embed = build_registration_board_embed(all_groups)
+                from cogs.registration import PersistentRegisterView
+                view = PersistentRegisterView(locked=False)
+                try:
+                    board_msg = await reg_channel.send(embed=embed, view=view)
+                    set_config("slot_message_id", board_msg.id)
+                    print(f"✅ Auto-deployed registration board message: {board_msg.id}", flush=True)
+                except Exception as e:
+                    print(f"❌ Failed to deploy registration board message: {e}", flush=True)
+
     async def _auto_provision(self, guild, event_id, count, capacity):
         """Automatically create groups, channels, roles using schedule.json."""
+        # Ensure setup channels exist and are configured
+        await self.ensure_setup_channels(guild, event_id)
         schedule = load_schedule()
         day_display = get_today_display()
         category_name = f"📋 SCRIMS — {day_display}"

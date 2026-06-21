@@ -1,5 +1,5 @@
 """
-Mack Bot Tortuga — Announcements Cog
+Mack Bot — Announcements Cog
 Announce, DM broadcast, room credentials — carried over from the old bot.
 """
 

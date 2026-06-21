@@ -1,5 +1,5 @@
 """
-Mack Bot Tortuga — Configuration & Constants
+Mack Bot — Configuration & Constants
 All environment variables, theme colors, and bot-wide settings.
 """
 
@@ -97,7 +97,7 @@ class Theme:
     # Visual separators
     SEP       = "✦ ─────────────────── ✦"
     THIN_SEP  = "────────────────────────"
-    FOOTER    = "✦ Mack Bot Tortuga 🚀 2027 Edition"
+    FOOTER    = "✦ Mack Bot 🚀 2027 Edition"
     BULLET    = "✦"
     ARROW     = "›"
 

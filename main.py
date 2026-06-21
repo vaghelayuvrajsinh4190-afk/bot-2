@@ -1,5 +1,5 @@
 """
-Mack Bot Tortuga — Main Entry Point
+Mack Bot — Main Entry Point
 Bot class, event handlers, cog loading, anti-crash system, and startup.
 """
 
@@ -57,8 +57,8 @@ def setup_anti_crash():
 
 # ═══════════════════ BOT CLASS ═══════════════════
 
-class TortugaBot(commands.Bot):
-    """Main bot class for Mack Bot Tortuga."""
+class MackBot(commands.Bot):
+    """Main bot class for Mack Bot."""
 
     def __init__(self):
         intents = discord.Intents.all()
@@ -118,14 +118,14 @@ class TortugaBot(commands.Bot):
 
 # ═══════════════════ EVENTS ═══════════════════
 
-bot = TortugaBot()
+bot = MackBot()
 
 
 @bot.event
 async def on_ready():
     print(f"✅ Logged in as {bot.user} (ID: {bot.user.id})", flush=True)
     print(f"📡 Connected to {len(bot.guilds)} guild(s)", flush=True)
-    print(f"🚀 Mack Bot Tortuga is ready!", flush=True)
+    print(f"🚀 Mack Bot is ready!", flush=True)
     print(f"🛡️ Anti-crash system active.", flush=True)
 
 

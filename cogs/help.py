@@ -1,7 +1,6 @@
 """
-Mack Bot Tortuga — Help Menu Cog
+Mack Bot — Help Menu Cog
 Interactive help menu with dropdown navigation.
-Updated for Blueprint v2 with all new commands.
 """
 
 import discord
@@ -45,9 +44,9 @@ class HelpDropdown(ui.Select):
 
     def _overview(self):
         return make_embed(
-            "⚡ Mack Bot Tortuga — Command Center",
+            "⚡ Mack Bot — Command Center",
             f"{Theme.SEP}\n\n"
-            f"Welcome to **Mack Bot Tortuga** — your fully autonomous scrim manager!\n\n"
+            f"Welcome to **Mack Bot** — your fully autonomous scrim manager!\n\n"
             f"{Theme.THIN_SEP}\n\n"
             f"**🚀 How It Works:**\n"
             f"  `1.` Bot auto-creates groups at midnight using `schedule.json`\n"

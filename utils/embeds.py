@@ -1,5 +1,5 @@
 """
-Mack Bot Tortuga — Embed Utilities
+Mack Bot — Embed Utilities
 Shared embed builder and visual helpers.
 """
 
@@ -246,7 +246,7 @@ def build_registration_receipt_embed(team_name, group_id, players,
         f"│  {member_mentions}\n"
         f"╰────────────────────────────────╯",
         Theme.SUCCESS,
-        "Mack Bot Tortuga — Registration Log"
+        "Mack Bot — Registration Log"
     )
     return embed
 
@@ -278,6 +278,6 @@ def build_group_control_panel_embed(group_doc):
         f"**Row 3** — Admin Only\n\n"
         f"{Theme.SEP}",
         Theme.PREMIUM,
-        f"Group {group_id} Panel │ Mack Bot Tortuga"
+        f"Group {group_id} Panel │ Mack Bot"
     )
     return embed
