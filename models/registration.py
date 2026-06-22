@@ -1,8 +1,8 @@
-
+"""
 Mack Bot — Registration Model
 CRUD operations for daily team registrations.
 Each registration links a team to a group for one day's event.
-
+"""
 
 import datetime
 from database import registrations
