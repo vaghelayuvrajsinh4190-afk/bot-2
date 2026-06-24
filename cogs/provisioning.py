@@ -93,8 +93,10 @@ class ProvisioningCog(commands.Cog):
         if local_now.hour == 0 and local_now.minute == 0:
             await self._midnight_reset(guild, local_now)
 
-        # ─────── REGISTRATION OPEN (10:00 AM IST) ───────
-        if local_now.hour == REGISTRATION_OPEN_HOUR and local_now.minute == REGISTRATION_OPEN_MINUTE:
+        # ─────── REGISTRATION OPEN (10:00 AM IST or Admin Configured) ───────
+        open_hour = await asyncio.to_thread(get_config, "registration_open_hour", REGISTRATION_OPEN_HOUR)
+        open_minute = await asyncio.to_thread(get_config, "registration_open_minute", REGISTRATION_OPEN_MINUTE)
+        if local_now.hour == open_hour and local_now.minute == open_minute:
             await self._registration_open(guild)
 
     @autopilot_loop.before_loop
@@ -179,6 +181,38 @@ class ProvisioningCog(commands.Cog):
         print(f"🕙 REGISTRATION OPEN: Unlocking registration...", flush=True)
 
         await self._unlock_registration(guild)
+
+        # Notify open time subscribers asynchronously
+        try:
+            subscribers = await asyncio.to_thread(get_config, "registration_open_subscribers", [])
+            if subscribers:
+                reg_channel_id = await asyncio.to_thread(get_channel_config, "register")
+                channel_link = f"https://discord.com/channels/{guild.id}/{reg_channel_id}" if reg_channel_id else ""
+                channel_text = f" [Go to registration channel]({channel_link})" if channel_link else ""
+                
+                dm_embed = make_embed(
+                    "🔓 Registration is now OPEN!",
+                    f"Today's scrim registration has opened! Go register your squad now!\n\n"
+                    f"👉{channel_text}",
+                    Theme.SUCCESS
+                )
+                for user_id in subscribers:
+                    member = guild.get_member(user_id)
+                    if not member:
+                        try:
+                            member = await guild.fetch_member(user_id)
+                        except Exception:
+                            continue
+                    if member:
+                        try:
+                            await member.send(embed=dm_embed)
+                        except Exception:
+                            pass
+                # Clear subscription list in MongoDB
+                await asyncio.to_thread(set_config, "registration_open_subscribers", [])
+                print(f"🔔 Notified {len(subscribers)} subscribers that registration is open.", flush=True)
+        except Exception as e:
+            print(f"⚠️ Failed to notify registration open subscribers: {e}", flush=True)
 
         log_channel_id = get_channel_config("admin_log")
         if log_channel_id:

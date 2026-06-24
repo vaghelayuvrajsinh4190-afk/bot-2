@@ -4,6 +4,7 @@ Slash commands for setpoints, setposition, addresult, matchresults, leaderboard,
 """
 
 import datetime
+import asyncio
 import re
 import discord
 from discord.ext import commands
@@ -33,8 +34,8 @@ class PointsCog(commands.Cog):
     @app_commands.checks.has_permissions(administrator=True)
     async def set_points(self, interaction: discord.Interaction, kill_points: int = None):
         if kill_points is None:
-            kp = get_config("kill_points", 1)
-            pp = get_config("position_points", DEFAULT_POSITION_POINTS)
+            kp = await asyncio.to_thread(get_config, "kill_points", 1)
+            pp = await asyncio.to_thread(get_config, "position_points", DEFAULT_POSITION_POINTS)
             pos_lines = []
             for pos in sorted(pp.keys(), key=lambda x: int(x)):
                 pts = pp[pos]
@@ -59,7 +60,7 @@ class PointsCog(commands.Cog):
             )
             return
 
-        set_config("kill_points", kill_points)
+        await asyncio.to_thread(set_config, "kill_points", kill_points)
         embed = make_embed(
             "✅ Kill Points Updated",
             f"{Theme.SEP}\n\n**💀 Kill Points:** `{kill_points}` per kill\n\n{Theme.SEP}",
@@ -87,9 +88,9 @@ class PointsCog(commands.Cog):
             )
             return
 
-        current_pp = get_config("position_points", DEFAULT_POSITION_POINTS).copy()
+        current_pp = (await asyncio.to_thread(get_config, "position_points", DEFAULT_POSITION_POINTS)).copy()
         current_pp[str(position)] = points
-        set_config("position_points", current_pp)
+        await asyncio.to_thread(set_config, "position_points", current_pp)
 
         medal = get_rank_emoji(position)
         embed = make_embed(
@@ -141,9 +142,9 @@ class PointsCog(commands.Cog):
         event_id = get_today_event_id()
         gid = group_id.upper()
 
-        # Check if group exists for today
+        # Check if group exists for today asynchronously
         from models import group as group_model
-        group_doc = group_model.get_group(event_id, gid)
+        group_doc = await asyncio.to_thread(group_model.get_group, event_id, gid)
         if not group_doc:
             await interaction.response.send_message(
                 embed=error_embed("❌ Group Not Found", f"Group `{gid}` not found for today."),
@@ -151,14 +152,17 @@ class PointsCog(commands.Cog):
             )
             return
 
-        # Look up registered team details
+        # Look up registered team details asynchronously
         from database import registrations as regs_collection
-        reg = regs_collection.find_one({
-            "event_id": event_id,
-            "group_id": gid,
-            "status": "registered",
-            "team_name": {"$regex": f"^{re.escape(team_name.strip())}$", "$options": "i"}
-        })
+        reg = await asyncio.to_thread(
+            regs_collection.find_one,
+            {
+                "event_id": event_id,
+                "group_id": gid,
+                "status": "registered",
+                "team_name": {"$regex": f"^{re.escape(team_name.strip())}$", "$options": "i"}
+            }
+        )
 
         if reg:
             actual_team_name = reg["team_name"]
@@ -167,8 +171,8 @@ class PointsCog(commands.Cog):
             actual_team_name = team_name.strip()
             owner_id = None
 
-        kp_val = get_config("kill_points", 1)
-        pp_dict = get_config("position_points", DEFAULT_POSITION_POINTS)
+        kp_val = await asyncio.to_thread(get_config, "kill_points", 1)
+        pp_dict = await asyncio.to_thread(get_config, "position_points", DEFAULT_POSITION_POINTS)
 
         kill_pts = kp_val * kills
         pos_pts = int(pp_dict.get(str(position), 0))
@@ -176,7 +180,8 @@ class PointsCog(commands.Cog):
 
         team_key = actual_team_name.strip().lower()
 
-        results_collection.update_one(
+        await asyncio.to_thread(
+            results_collection.update_one,
             {
                 "event_id": event_id,
                 "group_id": gid,
@@ -227,11 +232,13 @@ class PointsCog(commands.Cog):
         event_id = get_today_event_id()
         gid = group_id.upper()
 
-        results = list(results_collection.find({
+        # Fetch results asynchronously
+        query_cursor = results_collection.find({
             "event_id": event_id,
             "group_id": gid,
             "match_number": match_number
-        }).sort("position", 1))
+        }).sort("position", 1)
+        results = await asyncio.to_thread(list, query_cursor)
 
         if not results:
             await interaction.response.send_message(
@@ -266,7 +273,9 @@ class PointsCog(commands.Cog):
     async def leaderboard(self, interaction: discord.Interaction, event_id: str = None):
         target_event = event_id or get_today_event_id()
 
-        results = list(results_collection.find({"event_id": target_event}))
+        # Fetch results asynchronously
+        query_cursor = results_collection.find({"event_id": target_event})
+        results = await asyncio.to_thread(list, query_cursor)
         if not results:
             await interaction.response.send_message(
                 embed=error_embed("❌ No Results", f"No match results recorded for event `{target_event}`."),
@@ -344,7 +353,8 @@ class PointsCog(commands.Cog):
         if group_id:
             query["group_id"] = group_id.upper()
 
-        results = list(results_collection.find(query))
+        query_cursor = results_collection.find(query)
+        results = await asyncio.to_thread(list, query_cursor)
         if not results:
             scope_str = f"in Group {group_id.upper()}" if group_id else "today"
             await interaction.response.send_message(
@@ -408,11 +418,14 @@ class PointsCog(commands.Cog):
         event_id = get_today_event_id()
         gid = group_id.upper()
 
-        deleted = results_collection.delete_many({
-            "event_id": event_id,
-            "group_id": gid,
-            "match_number": match_number
-        })
+        deleted = await asyncio.to_thread(
+            results_collection.delete_many,
+            {
+                "event_id": event_id,
+                "group_id": gid,
+                "match_number": match_number
+            }
+        )
 
         embed = make_embed(
             "🔄 Results Reset",
@@ -426,7 +439,7 @@ class PointsCog(commands.Cog):
     async def reset_all_results(self, interaction: discord.Interaction):
         event_id = get_today_event_id()
 
-        deleted = results_collection.delete_many({"event_id": event_id})
+        deleted = await asyncio.to_thread(results_collection.delete_many, {"event_id": event_id})
 
         embed = make_embed(
             "🔄 All Results Reset",
@@ -444,7 +457,8 @@ class PointsCog(commands.Cog):
     async def post_leaderboard(self, interaction: discord.Interaction, channel: discord.TextChannel):
         event_id = get_today_event_id()
 
-        results = list(results_collection.find({"event_id": event_id}))
+        query_cursor = results_collection.find({"event_id": event_id})
+        results = await asyncio.to_thread(list, query_cursor)
         if not results:
             await interaction.response.send_message(
                 embed=error_embed("❌ No Results", "No match results recorded yet today."),

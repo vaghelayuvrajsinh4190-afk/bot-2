@@ -783,6 +783,8 @@ class AdminPanelCog(commands.Cog):
         app_commands.Choice(name="default_group_capacity", value="default_group_capacity"),
         app_commands.Choice(name="reminder_lead_minutes", value="reminder_lead_minutes"),
         app_commands.Choice(name="lock_minutes", value="lock_minutes"),
+        app_commands.Choice(name="registration_open_hour", value="registration_open_hour"),
+        app_commands.Choice(name="registration_open_minute", value="registration_open_minute"),
     ])
     @app_commands.checks.has_permissions(administrator=True)
     async def config_cmd(
@@ -828,6 +830,19 @@ class AdminPanelCog(commands.Cog):
 
             try:
                 int_value = int(value)
+                if setting == "registration_open_hour" and (int_value < 0 or int_value > 23):
+                    await interaction.response.send_message(
+                        embed=error_embed("❌ Invalid Value", "registration_open_hour must be between 0 and 23."),
+                        ephemeral=True
+                    )
+                    return
+                if setting == "registration_open_minute" and (int_value < 0 or int_value > 59):
+                    await interaction.response.send_message(
+                        embed=error_embed("❌ Invalid Value", "registration_open_minute must be between 0 and 59."),
+                        ephemeral=True
+                    )
+                    return
+
                 set_config(setting, int_value)
                 await interaction.response.send_message(
                     embed=success_embed("✅ Config Updated", f"**{setting}** set to `{int_value}`"),

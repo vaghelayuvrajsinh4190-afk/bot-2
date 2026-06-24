@@ -1,7 +1,7 @@
 """
 Mack Bot — Embed Utilities
 Shared embed builder and visual helpers.
-Tier-1 Esports UI — Premium visual design for Sovereign Ascent & Voltaris.
+Tier-1 Esports UI — Premium visual design for syndicate.
 """
 
 import datetime
@@ -228,7 +228,7 @@ def build_registration_board_embed(groups=None, event_name="Daily Scrims"):
         f"🏟️ {event_name} — Registration Board",
         f"```ansi\n"
         f"\u001b[1;35m╔══════════════════════════════════════╗\u001b[0m\n"
-        f"\u001b[1;35m║\u001b[0m  \u001b[1;37m⚡ SOVEREIGN ASCENT x VOLTARIS ⚡\u001b[0m   \u001b[1;35m║\u001b[0m\n"
+        f"\u001b[1;35m║\u001b[0m            \u001b[1;37m⚡ SYNDICATE ⚡\u001b[0m             \u001b[1;35m║\u001b[0m\n"
         f"\u001b[1;35m╚══════════════════════════════════════╝\u001b[0m\n"
         f"```\n"
         f"📊 **Slots Claimed:** `{total_filled}/{total_capacity}` │ "

@@ -9,17 +9,40 @@ Handles the full registration flow:
 """
 
 import datetime
+import asyncio
 import discord
 from discord.ext import commands
 from discord import app_commands, ui
 
-from config import Theme, TIMEZONE_OFFSET
+from config import Theme, TIMEZONE_OFFSET, REGISTRATION_OPEN_HOUR, REGISTRATION_OPEN_MINUTE
 from utils.embeds import (
     make_embed, error_embed, success_embed, build_roster_embed,
     build_slot_availability_embed, build_registration_receipt_embed,
     build_registration_board_embed
 )
 from models import team_profile, group as group_model, registration as reg_model, punishment
+from database import get_config
+
+# In-memory cache for multi-step registrations to bridge Step 1 and Step 2
+registration_cache = {}
+
+async def is_registration_open():
+    """Check if registration is open based on database configuration or defaults."""
+    try:
+        open_hour = await asyncio.to_thread(get_config, "registration_open_hour", REGISTRATION_OPEN_HOUR)
+        open_minute = await asyncio.to_thread(get_config, "registration_open_minute", REGISTRATION_OPEN_MINUTE)
+    except Exception as e:
+        print(f"⚠️ Error fetching registration config: {e}", flush=True)
+        open_hour = REGISTRATION_OPEN_HOUR
+        open_minute = REGISTRATION_OPEN_MINUTE
+
+    utc_now = datetime.datetime.utcnow()
+    local_now = utc_now + datetime.timedelta(hours=TIMEZONE_OFFSET)
+    open_time = local_now.replace(hour=open_hour, minute=open_minute, second=0, microsecond=0)
+    
+    if local_now < open_time:
+        return False, open_hour, open_minute, local_now
+    return True, open_hour, open_minute, local_now
 
 # ═══════════════════ HELPERS ═══════════════════
 
@@ -80,8 +103,10 @@ class TeamInfoModal(ui.Modal, title="📋 Team Registration — Step 1/3"):
             )
             return
 
-        # Check team name uniqueness
-        is_dup, existing_owner = team_profile.check_duplicate_team_name(name, exclude_owner_id=owner_id)
+        # Check team name uniqueness asynchronously
+        is_dup, existing_owner = await asyncio.to_thread(
+            team_profile.check_duplicate_team_name, name, exclude_owner_id=owner_id
+        )
         if is_dup:
             await interaction.response.send_message(
                 embed=error_embed("❌ Name Taken", f"Team name **{name}** is already registered by another squad!"),
@@ -89,31 +114,81 @@ class TeamInfoModal(ui.Modal, title="📋 Team Registration — Step 1/3"):
             )
             return
 
-        # Store data temporarily and open Modal 2
-        modal2_data = {
+        is_edit = getattr(self, '_is_edit', False)
+
+        # Store data temporarily in the cache
+        registration_cache[interaction.user.id] = {
             "team_name": name,
             "owner_name": self.owner_name.value.strip(),
             "email": self.email.value.strip(),
             "contact": self.contact.value.strip(),
+            "is_edit": is_edit,
         }
 
-        # Only hit the DB again for prefill data if this is actually an edit flow.
-        # Fresh registrations (the common path) skip this entirely — it was
-        # previously fetched and discarded every time, costing a blocking
-        # Mongo round-trip inside the 3-second modal response window.
-        is_edit = getattr(self, '_is_edit', False)
+        # Show Step 1 summary embed with button bridge
+        embed = make_embed(
+            "📋 Team Registration — Step 1/3 Complete",
+            f"✅ **Step 1 details captured!**\n\n"
+            f"╭── 📋 **Team Details** ──╮\n"
+            f"│  🏷️ **Team Name:** `{name}`\n"
+            f"│  👤 **Owner/IGL:** `{self.owner_name.value.strip()}`\n"
+            f"│  📧 **Email:** `{self.email.value.strip() if self.email.value.strip() else 'Not provided'}`\n"
+            f"│  📞 **Contact:** `{self.contact.value.strip() if self.contact.value.strip() else 'Not provided'}`\n"
+            f"╰───────────────────────╯\n\n"
+            f"{Theme.THIN_SEP}\n"
+            f"Please click the **Proceed to Step 2** button below to enter your player roster details.",
+            Theme.ACCENT,
+            "Step 1 of 3 — Team Info"
+        )
+        await interaction.response.send_message(
+            embed=embed,
+            view=ProceedToStep2View(interaction.user.id),
+            ephemeral=True
+        )
+
+class ProceedToStep2View(ui.View):
+    """View with a button to proceed to Step 2/3 modal."""
+
+    def __init__(self, owner_id: int):
+        super().__init__(timeout=180)
+        self.owner_id = owner_id
+
+    @ui.button(
+        label="Proceed to Step 2",
+        style=discord.ButtonStyle.primary,
+        emoji="➡️",
+        custom_id="proceed_to_step_2_btn"
+    )
+    async def proceed_to_step_2(self, interaction: discord.Interaction, button: ui.Button):
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message(
+                embed=error_embed("❌ Access Denied", "This registration session belongs to someone else."),
+                ephemeral=True
+            )
+            return
+
+        cached_data = registration_cache.get(interaction.user.id)
+        if not cached_data:
+            await interaction.response.send_message(
+                embed=error_embed("❌ Session Expired", "Your registration session has expired. Please start over."),
+                ephemeral=True
+            )
+            return
+
+        user_id = str(interaction.user.id)
+        is_edit = cached_data.get("is_edit", False)
+        prefill_players = {}
         if is_edit:
-            profile = team_profile.get_profile(owner_id)
-            prefill_players = {}
+            profile = await asyncio.to_thread(team_profile.get_profile, user_id)
             if profile:
                 uids = profile.get("player_uids", [])
                 igns = profile.get("player_igns", [])
                 for i in range(min(4, len(uids))):
                     prefill_players[f"uid_{i+1}"] = uids[i] if i < len(uids) else ""
                     prefill_players[f"ign_{i+1}"] = igns[i] if i < len(igns) else ""
-            modal2 = PlayerDetailsModal(modal2_data, prefill_players) if profile else PlayerDetailsModal(modal2_data)
+            modal2 = PlayerDetailsModal(cached_data, prefill_players) if profile else PlayerDetailsModal(cached_data)
         else:
-            modal2 = PlayerDetailsModal(modal2_data)
+            modal2 = PlayerDetailsModal(cached_data)
 
         await interaction.response.send_modal(modal2)
 
@@ -207,8 +282,9 @@ class PlayerDetailsModal(ui.Modal, title="🎮 Player Roster — Step 2/3"):
             )
             return
 
-        # Save the team profile with all data (including new fields)
-        team_profile.save_profile(
+        # Save the team profile with all data (including new fields) asynchronously
+        await asyncio.to_thread(
+            team_profile.save_profile,
             owner_id=owner_id,
             team_name=self.team_data["team_name"],
             players=player_list,
@@ -260,8 +336,8 @@ class ConfirmRegistrationView(ui.View):
         owner_id = str(interaction.user.id)
         event_id = get_today_event_id()
 
-        # Check if banned
-        is_ban, ban_doc = punishment.is_banned(owner_id)
+        # Check if banned asynchronously
+        is_ban, ban_doc = await asyncio.to_thread(punishment.is_banned, owner_id)
         if is_ban:
             await interaction.response.send_message(
                 embed=error_embed("❌ Error", "You are banned and cannot register."),
@@ -269,17 +345,18 @@ class ConfirmRegistrationView(ui.View):
             )
             return
 
-        # Check if already registered today
-        if reg_model.is_already_registered(owner_id, event_id):
+        # Check if already registered today asynchronously
+        is_registered = await asyncio.to_thread(reg_model.is_already_registered, owner_id, event_id)
+        if is_registered:
             await interaction.response.send_message(
                 embed=error_embed("❌ Error", "You are already registered for today."),
                 ephemeral=True
             )
             return
 
-        # Check teammate status
+        # Check teammate status asynchronously
         for m in self.selected_members:
-            is_reg, existing_team = reg_model.is_teammate_registered(str(m.id), event_id)
+            is_reg, existing_team = await asyncio.to_thread(reg_model.is_teammate_registered, str(m.id), event_id)
             if is_reg:
                 await interaction.response.send_message(
                     embed=error_embed("❌ Error", f"{m.mention} is already registered in team **{existing_team}**."),
@@ -287,8 +364,8 @@ class ConfirmRegistrationView(ui.View):
                 )
                 return
 
-        # Check group availability
-        available_groups = group_model.get_open_groups(event_id)
+        # Check group availability asynchronously
+        available_groups = await asyncio.to_thread(group_model.get_open_groups, event_id)
         if not available_groups:
             await interaction.response.send_message(
                 embed=error_embed("❌ All Groups Full", "All groups for today are completely full."),
@@ -298,8 +375,8 @@ class ConfirmRegistrationView(ui.View):
 
         await interaction.response.defer(ephemeral=True)
 
-        # Atomic slot claim
-        assigned_group = group_model.claim_slot(event_id)
+        # Atomic slot claim asynchronously
+        assigned_group = await asyncio.to_thread(group_model.claim_slot, event_id)
         if not assigned_group:
             await interaction.followup.send(
                 embed=error_embed("❌ Claim Failed", "All groups filled up while processing your request."),
@@ -307,9 +384,10 @@ class ConfirmRegistrationView(ui.View):
             )
             return
 
-        # Create registration
+        # Create registration asynchronously
         teammate_ids = [str(m.id) for m in self.selected_members]
-        reg_model.create_registration(
+        await asyncio.to_thread(
+            reg_model.create_registration,
             owner_id=owner_id,
             event_id=event_id,
             group_id=assigned_group["group_id"],
@@ -318,8 +396,9 @@ class ConfirmRegistrationView(ui.View):
             teammate_ids=teammate_ids
         )
 
-        # Save teammate IDs to profile
-        team_profile.save_profile(
+        # Save teammate IDs to profile asynchronously
+        await asyncio.to_thread(
+            team_profile.save_profile,
             owner_id, self.team_name, self.players, teammate_ids,
             player_uids=self.player_uids, player_igns=self.player_igns
         )
@@ -384,7 +463,8 @@ class ConfirmRegistrationView(ui.View):
         if not channel:
             return
 
-        regs = reg_model.get_group_registrations(group_doc["group_id"], event_id)
+        # Fetch group registrations asynchronously
+        regs = await asyncio.to_thread(reg_model.get_group_registrations, group_doc["group_id"], event_id)
         embed = build_roster_embed(group_doc, regs, group_doc["capacity"])
 
         msg_id = group_doc.get("roster_message_id")
@@ -398,13 +478,13 @@ class ConfirmRegistrationView(ui.View):
 
         if message is None:
             message = await channel.send(embed=embed)
-            group_model.update_roster_message(event_id, group_doc["group_id"], message.id)
+            await asyncio.to_thread(group_model.update_roster_message, event_id, group_doc["group_id"], message.id)
 
     async def _refresh_slot_availability(self, guild, event_id):
         """Update the slot availability embed in the register channel."""
         from database import get_channel_config, get_config, set_config
 
-        reg_channel_id = get_channel_config("register")
+        reg_channel_id = await asyncio.to_thread(get_channel_config, "register")
         if not reg_channel_id:
             return
 
@@ -412,11 +492,12 @@ class ConfirmRegistrationView(ui.View):
         if not channel:
             return
 
-        all_groups = group_model.get_all_groups(event_id)
+        # Fetch groups asynchronously
+        all_groups = await asyncio.to_thread(group_model.get_all_groups, event_id)
         embed = build_registration_board_embed(all_groups)
 
-        # Try to find and edit the existing permanent board message
-        slot_msg_id = get_config("slot_message_id")
+        # Try to find and edit the existing permanent board message asynchronously
+        slot_msg_id = await asyncio.to_thread(get_config, "slot_message_id")
         if slot_msg_id:
             try:
                 msg = await channel.fetch_message(slot_msg_id)
@@ -425,8 +506,8 @@ class ConfirmRegistrationView(ui.View):
             except discord.NotFound:
                 pass
 
-        # Fallback: update event-specific message
-        avail_msg_id = get_config(f"slot_availability_msg_{event_id}")
+        # Fallback: update event-specific message asynchronously
+        avail_msg_id = await asyncio.to_thread(get_config, f"slot_availability_msg_{event_id}")
         if avail_msg_id:
             try:
                 msg = await channel.fetch_message(avail_msg_id)
@@ -440,7 +521,7 @@ class ConfirmRegistrationView(ui.View):
         """Post a confirmation receipt to #registered-teams."""
         from database import get_channel_config
 
-        log_channel_id = get_channel_config("registered_teams")
+        log_channel_id = await asyncio.to_thread(get_channel_config, "registered_teams")
         if not log_channel_id:
             return
 
@@ -500,9 +581,9 @@ class TeammateSelect(ui.UserSelect):
             )
             return
 
-        # Validation: check if any teammate is already registered today
+        # Validation: check if any teammate is already registered today asynchronously
         for m in members:
-            is_reg, existing_team = reg_model.is_teammate_registered(str(m.id), event_id)
+            is_reg, existing_team = await asyncio.to_thread(reg_model.is_teammate_registered, str(m.id), event_id)
             if is_reg:
                 await interaction.response.send_message(
                     embed=error_embed(
@@ -515,8 +596,8 @@ class TeammateSelect(ui.UserSelect):
                 )
                 return
 
-        # Check if groups are available
-        available_groups = group_model.get_open_groups(event_id)
+        # Check if groups are available asynchronously
+        available_groups = await asyncio.to_thread(group_model.get_open_groups, event_id)
         if not available_groups:
             await interaction.response.send_message(
                 embed=error_embed(
@@ -606,9 +687,9 @@ class SavedProfileView(ui.View):
     @ui.button(label="New Team", style=discord.ButtonStyle.secondary, emoji="✨", row=1)
     async def new_team(self, interaction: discord.Interaction, button: ui.Button):
         """New → wipes old data, opens blank Modal 1."""
-        # Delete old profile
+        # Delete old profile asynchronously
         owner_id = str(interaction.user.id)
-        team_profile.delete_profile(owner_id)
+        await asyncio.to_thread(team_profile.delete_profile, owner_id)
         await interaction.response.send_modal(TeamInfoModal())
 
 
@@ -626,24 +707,127 @@ class PersistentRegisterView(ui.View):
                 label="🔒 Registration Closed",
                 style=discord.ButtonStyle.secondary,
                 custom_id="tortuga_register_btn",
-                disabled=True
+                disabled=True,
+                row=0
             )
             self.add_item(btn)
+
+            notify_btn = ui.Button(
+                label="🔔 Notify Me",
+                style=discord.ButtonStyle.primary,
+                custom_id="tortuga_notify_open_btn",
+                row=0
+            )
+            notify_btn.callback = self._notify_callback
+            self.add_item(notify_btn)
         else:
             btn = ui.Button(
                 label="📥 Register Team",
                 style=discord.ButtonStyle.green,
                 custom_id="tortuga_register_btn",
+                row=0
             )
             btn.callback = self._register_callback
             self.add_item(btn)
+
+            reminder_btn = ui.Button(
+                label="🔔 Match Reminder",
+                style=discord.ButtonStyle.secondary,
+                custom_id="tortuga_match_reminder_btn",
+                row=0
+            )
+            reminder_btn.callback = self._reminder_callback
+            self.add_item(reminder_btn)
+
+    async def _notify_callback(self, interaction: discord.Interaction):
+        user_id = interaction.user.id
+        await interaction.response.defer(ephemeral=True)
+
+        try:
+            subscribers = await asyncio.to_thread(get_config, "registration_open_subscribers", [])
+            if subscribers is None:
+                subscribers = []
+            if user_id in subscribers:
+                subscribers.remove(user_id)
+                await asyncio.to_thread(set_config, "registration_open_subscribers", subscribers)
+                await interaction.followup.send(
+                    embed=success_embed(
+                        "🔕 Notification Cancelled",
+                        "You will no longer receive a DM when registration opens."
+                    ),
+                    ephemeral=True
+                )
+            else:
+                subscribers.append(user_id)
+                await asyncio.to_thread(set_config, "registration_open_subscribers", subscribers)
+                await interaction.followup.send(
+                    embed=success_embed(
+                        "🔔 Notification Set",
+                        "You will receive a DM when registration opens!"
+                    ),
+                    ephemeral=True
+                )
+        except Exception as e:
+            await interaction.followup.send(
+                embed=error_embed("❌ Error", f"Failed to update notify settings: {e}"),
+                ephemeral=True
+            )
+
+    async def _reminder_callback(self, interaction: discord.Interaction):
+        owner_id = str(interaction.user.id)
+        event_id = get_today_event_id()
+        await interaction.response.defer(ephemeral=True)
+
+        # Check if the user is registered today asynchronously
+        reg = await asyncio.to_thread(reg_model.get_registration, owner_id, event_id)
+        if not reg:
+            await interaction.followup.send(
+                embed=error_embed(
+                    "❌ Not Registered",
+                    "You must register your team first before setting a match reminder!"
+                ),
+                ephemeral=True
+            )
+            return
+
+        current_state = reg.get("dm_reminder", False)
+        new_state = not current_state
+
+        from database import registrations as registrations_collection
+        await asyncio.to_thread(
+            registrations_collection.update_one,
+            {"owner_id": owner_id, "event_id": event_id, "status": "registered"},
+            {"$set": {"dm_reminder": new_state}}
+        )
+
+        status_text = "ENABLED" if new_state else "DISABLED"
+        embed = make_embed(
+            "🔔 Match Reminder Updated",
+            f"Direct Message reminders are now **{status_text}** for your team **{reg['team_name']}**.\n\n"
+            f"You will receive a direct message 30 minutes before your match begins.",
+            Theme.SUCCESS if new_state else Theme.WARNING
+        )
+        await interaction.followup.send(embed=embed, ephemeral=True)
 
     async def _register_callback(self, interaction: discord.Interaction):
         owner_id = str(interaction.user.id)
         event_id = get_today_event_id()
 
-        # Check if banned
-        is_ban, ban_doc = punishment.is_banned(owner_id)
+        # Check registration open time dynamically and asynchronously
+        is_open, open_h, open_m, current_t = await is_registration_open()
+        if not is_open:
+            await interaction.response.send_message(
+                embed=error_embed(
+                    "🔒 Registration Closed",
+                    f"Registration opens daily at **{open_h:02d}:{open_m:02d} AM IST**.\n"
+                    f"Current time: **{current_t.strftime('%I:%M %p IST')}**"
+                ),
+                ephemeral=True
+            )
+            return
+
+        # Check if banned asynchronously
+        is_ban, ban_doc = await asyncio.to_thread(punishment.is_banned, owner_id)
         if is_ban:
             reason = ban_doc.get("reason", "No reason provided")
             exp = ban_doc.get("expires_at", "Unknown")
@@ -671,8 +855,8 @@ class PersistentRegisterView(ui.View):
             )
             return
 
-        # Check if already registered today
-        existing = reg_model.get_registration(owner_id, event_id)
+        # Check if already registered today asynchronously
+        existing = await asyncio.to_thread(reg_model.get_registration, owner_id, event_id)
         if existing:
             group_id = existing.get("group_id", "???")
             team_name = existing.get("team_name", "???")
@@ -691,9 +875,9 @@ class PersistentRegisterView(ui.View):
             )
             return
 
-        # Check if groups are provisioned
-        available = group_model.get_open_groups(event_id)
-        all_groups = group_model.get_all_groups(event_id)
+        # Check if groups are provisioned asynchronously
+        available = await asyncio.to_thread(group_model.get_open_groups, event_id)
+        all_groups = await asyncio.to_thread(group_model.get_all_groups, event_id)
         if not all_groups:
             await interaction.response.send_message(
                 embed=error_embed(
@@ -718,8 +902,8 @@ class PersistentRegisterView(ui.View):
             )
             return
 
-        # "Already Registered" Intercept — check for saved profile (30-day memory)
-        profile = team_profile.get_profile(owner_id)
+        # "Already Registered" Intercept — check for saved profile (30-day memory) asynchronously
+        profile = await asyncio.to_thread(team_profile.get_profile, owner_id)
         if profile:
             # Condition B: Valid profile exists within 30 days
             team_name = profile.get("team_name", "Unknown")
@@ -834,8 +1018,21 @@ class RegistrationCog(commands.Cog):
         owner_id = str(interaction.user.id)
         event_id = get_today_event_id()
 
-        # Check ban
-        is_ban, _ = punishment.is_banned(owner_id)
+        # Check registration open time dynamically and asynchronously
+        is_open, open_h, open_m, current_t = await is_registration_open()
+        if not is_open:
+            await interaction.response.send_message(
+                embed=error_embed(
+                    "🔒 Registration Closed",
+                    f"Registration opens daily at **{open_h:02d}:{open_m:02d} AM IST**.\n"
+                    f"Current time: **{current_t.strftime('%I:%M %p IST')}**"
+                ),
+                ephemeral=True
+            )
+            return
+
+        # Check ban asynchronously
+        is_ban, _ = await asyncio.to_thread(punishment.is_banned, owner_id)
         if is_ban:
             await interaction.response.send_message(
                 embed=error_embed("⛔ Banned", "You are banned from scrims."),
@@ -843,8 +1040,8 @@ class RegistrationCog(commands.Cog):
             )
             return
 
-        # Check already registered
-        existing = reg_model.get_registration(owner_id, event_id)
+        # Check already registered asynchronously
+        existing = await asyncio.to_thread(reg_model.get_registration, owner_id, event_id)
         if existing:
             await interaction.response.send_message(
                 embed=error_embed("⚠️ Already Registered", "You're already registered for today."),
@@ -852,8 +1049,8 @@ class RegistrationCog(commands.Cog):
             )
             return
 
-        # Check saved profile
-        profile = team_profile.get_profile(owner_id)
+        # Check saved profile asynchronously
+        profile = await asyncio.to_thread(team_profile.get_profile, owner_id)
         if profile:
             embed = make_embed(
                 "👋 Welcome Back!",
@@ -876,8 +1073,8 @@ class RegistrationCog(commands.Cog):
         owner_id = str(interaction.user.id)
         event_id = get_today_event_id()
 
-        profile = team_profile.get_profile(owner_id)
-        reg = reg_model.get_registration(owner_id, event_id)
+        profile = await asyncio.to_thread(team_profile.get_profile, owner_id)
+        reg = await asyncio.to_thread(reg_model.get_registration, owner_id, event_id)
 
         if not profile and not reg:
             await interaction.response.send_message(
