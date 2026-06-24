@@ -57,7 +57,7 @@ class AnnouncementsCog(commands.Cog):
 
         event_id = get_today_event_id()
         gid = group_id.upper()
-        group_doc = group_model.get_group(event_id, gid)
+        group_doc = await asyncio.to_thread(group_model.get_group, event_id, gid)
 
         if not group_doc:
             await interaction.response.send_message(
