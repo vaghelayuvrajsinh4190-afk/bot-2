@@ -32,6 +32,9 @@ DEFAULT_LOCK_MINUTES = 20  # lock cancel/reschedule this many min before match
 REGISTRATION_OPEN_HOUR = 10   # 10:00 AM IST
 REGISTRATION_OPEN_MINUTE = 0
 
+# Default category name for provisioned groups
+DEFAULT_CATEGORY_NAME = "📋 SCRIMS"
+
 # Team profile expiry
 PROFILE_EXPIRY_DAYS = 30  # 30-day memory for team profiles
 

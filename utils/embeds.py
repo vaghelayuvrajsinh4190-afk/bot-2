@@ -1,6 +1,7 @@
 """
 Mack Bot — Embed Utilities
 Shared embed builder and visual helpers.
+Tier-1 Esports UI — Premium visual design for Sovereign Ascent & Voltaris.
 """
 
 import datetime
@@ -35,6 +36,7 @@ def warning_embed(title, desc):
 def build_roster_embed(group_doc, registrations, capacity):
     """
     Build the live roster embed for a group channel.
+    Uses 16-slot visual layout with 🟢/⚪ status indicators.
 
     Args:
         group_doc: The group document from MongoDB
@@ -58,37 +60,53 @@ def build_roster_embed(group_doc, registrations, capacity):
     m2_start = match2.get("start", "TBD")
     m2_map = match2.get("map", "TBD")
 
-    # Build table lines
-    table_lines = []
+    # Build 16-slot roster lines with visual indicators
+    slot_lines = []
     for i in range(capacity):
         num = f"{i+1:02d}"
         if i < len(registrations):
             reg = registrations[i]
             tn = reg.get("team_name", "Unknown")
-            tn = (tn[:20] + '..') if len(tn) > 20 else tn
+            tn = (tn[:18] + '..') if len(tn) > 18 else tn
             captain = reg.get("owner_id", "")
-            table_lines.append(f" {num} │ ✦ {tn:<20} │ <@{captain}>")
+            slot_lines.append(f"`{num}` 🟢 **{tn}** › <@{captain}>")
         else:
-            table_lines.append(f" {num} │ ▱ ── Open Slot ──")
+            slot_lines.append(f"`{num}` ⚪ *Available*")
 
-    header = f"  #  │ TEAM NAME\n ────┼───────────────────"
-    tabular_data = header + "\n" + "\n".join(table_lines)
+    # Split into two columns if capacity > 8
+    if capacity > 8:
+        mid = (capacity + 1) // 2
+        col1 = "\n".join(slot_lines[:mid])
+        col2 = "\n".join(slot_lines[mid:])
+    else:
+        col1 = "\n".join(slot_lines)
+        col2 = None
 
     embed = make_embed(
         f"🏆  {display_name}  ─  Live Roster",
+        f"```ansi\n\u001b[1;36m{'═' * 40}\u001b[0m\n```\n"
         f"📡 **Status:** {status} │ **{count}/{capacity}** Slots Filled\n"
         f"▓ **Roster Fill:** {bar}\n\n"
-        f"╭── 🎮 **Match Details** ──╮\n"
-        f"│  **Match 1:** `{m1_start}` │ IDP `{m1_idp}`\n"
-        f"│  📍 Map: `{m1_map}`\n"
+        f"╭── 🎮 **Match Schedule** ──────────╮\n"
         f"│\n"
-        f"│  **Match 2:** `{m2_start}` │ IDP `{m2_idp}`\n"
-        f"│  📍 Map: `{m2_map}`\n"
-        f"╰──────────────────────────╯",
+        f"│  ⚔️ **Match 1**\n"
+        f"│  ⏱️ Start: `{m1_start}` │ IDP: `{m1_idp}`\n"
+        f"│  🗺️ Map: `{m1_map}`\n"
+        f"│\n"
+        f"│  ⚔️ **Match 2**\n"
+        f"│  ⏱️ Start: `{m2_start}` │ IDP: `{m2_idp}`\n"
+        f"│  🗺️ Map: `{m2_map}`\n"
+        f"│\n"
+        f"╰───────────────────────────────────╯",
         color=color,
-        footer="🔄 Auto-updates • Do not type here"
+        footer="🔄 Auto-updates on every registration"
     )
-    embed.add_field(name="📋 **Registered Squads**", value=f"```\n{tabular_data}\n```", inline=False)
+
+    # Add roster columns
+    embed.add_field(name="📋 **Registered Squads**", value=col1 or "*No slots*", inline=bool(col2))
+    if col2:
+        embed.add_field(name="\u200b", value=col2, inline=True)
+
     return embed
 
 
@@ -146,8 +164,7 @@ def build_registration_board_embed(groups=None, event_name="Daily Scrims"):
     """
     Build the permanent registration board embed for #register-here.
     This is the board that persists across days and gets reset at midnight.
-
-    Uses circle-style progress bars: ●●●●●○○○○○
+    Tier-1 tournament-style visual design.
 
     Args:
         groups: Optional list of group documents. If None, shows empty board.
@@ -176,30 +193,55 @@ def build_registration_board_embed(groups=None, event_name="Daily Scrims"):
             shift = g.get("shift", "")
             shift_emoji = "☀️" if shift == "day" else "🌙" if shift == "evening" else "📍"
 
+            # Status indicator
+            if count >= cap:
+                status_tag = "```diff\n- FULL\n```"
+            elif count >= cap * 0.75:
+                status_tag = "```fix\nAlmost Full\n```"
+            else:
+                status_tag = ""
+
             group_lines.append(
-                f"{shift_emoji} **Group {gid}** — `{count}/{cap}` {circle_bar}\n"
+                f"{shift_emoji} **Group {gid}** — `{count}/{cap}` {circle_bar}{' ' + status_tag if status_tag else ''}\n"
                 f"   ⏱ M1: `{m1_start}` ({m1_map}) │ M2: `{m2_start}` ({m2_map})"
             )
     else:
         total_capacity = 1  # Avoid division by zero
 
-    overall_bar = Theme.slot_bar(total_filled, total_capacity, 10)
-    groups_text = "\n\n".join(group_lines) if group_lines else (
-        "○○○○○○○○○○  `0/0 filled`\n\n*No groups provisioned yet. Check back later!*"
-    )
+    overall_bar = Theme.slot_bar(total_filled, total_capacity, 12)
+
+    if group_lines:
+        groups_text = "\n\n".join(group_lines)
+    else:
+        groups_text = (
+            "```\n"
+            "  ○○○○○○○○○○  0/0 filled\n"
+            "\n"
+            "  No groups provisioned yet.\n"
+            "  Check back later!\n"
+            "```"
+        )
+
+    slots_remaining = total_capacity - total_filled if groups else 0
 
     embed = make_embed(
-        f"📋 {event_name} — Registration Board",
-        f"{Theme.SEP}\n\n"
-        f"📊 **Slots Available:** `{total_filled}/{total_capacity}` filled\n"
+        f"🏟️ {event_name} — Registration Board",
+        f"```ansi\n"
+        f"\u001b[1;35m╔══════════════════════════════════════╗\u001b[0m\n"
+        f"\u001b[1;35m║\u001b[0m  \u001b[1;37m⚡ SOVEREIGN ASCENT x VOLTARIS ⚡\u001b[0m   \u001b[1;35m║\u001b[0m\n"
+        f"\u001b[1;35m╚══════════════════════════════════════╝\u001b[0m\n"
+        f"```\n"
+        f"📊 **Slots Claimed:** `{total_filled}/{total_capacity}` │ "
+        f"**Remaining:** `{slots_remaining}`\n"
         f"▓ **Overall:** {overall_bar}\n\n"
         f"{Theme.THIN_SEP}\n\n"
         f"{groups_text}\n\n"
         f"{Theme.THIN_SEP}\n"
-        f"🔘 Click **📥 Register Team** below to claim a slot!\n\n"
+        f"👇 Click **📥 Register Team** below to claim your slot!\n"
+        f"*Registration is first-come, first-served.*\n\n"
         f"{Theme.SEP}",
         Theme.PREMIUM,
-        "🔄 Auto-updates on every registration"
+        "🔄 Auto-updates on every registration │ Mack Bot 🚀"
     )
     return embed
 
@@ -279,5 +321,46 @@ def build_group_control_panel_embed(group_doc):
         f"{Theme.SEP}",
         Theme.PREMIUM,
         f"Group {group_id} Panel │ Mack Bot"
+    )
+    return embed
+
+
+def build_provision_summary_embed(event_id, created_count, capacity,
+                                   category_name, provisioned_by=None):
+    """
+    Build a premium provisioning summary embed.
+
+    Args:
+        event_id: The event date ID
+        created_count: Number of groups created
+        capacity: Teams per group
+        category_name: Name of the created category
+        provisioned_by: Display name of the admin who triggered it
+    """
+    total_slots = capacity * created_count
+
+    embed = make_embed(
+        "✅ Provisioning Complete!",
+        f"```ansi\n"
+        f"\u001b[1;32m{'═' * 40}\u001b[0m\n"
+        f"\u001b[1;37m  ⚡ GROUPS DEPLOYED SUCCESSFULLY ⚡\u001b[0m\n"
+        f"\u001b[1;32m{'═' * 40}\u001b[0m\n"
+        f"```\n"
+        f"╭── 📋 **Setup Summary** ──────────────╮\n"
+        f"│\n"
+        f"│  📅 **Event:** `{event_id}`\n"
+        f"│  📂 **Category:** `{category_name}`\n"
+        f"│  👥 **Groups:** `{created_count}`\n"
+        f"│  🏟️ **Capacity:** `{capacity}` per group\n"
+        f"│  🎮 **Total Slots:** `{total_slots}`\n"
+        f"│  📋 **Schedule:** Using `schedule.json`\n"
+        f"│\n"
+        f"╰──────────────────────────────────────╯\n\n"
+        f"Created: **{created_count}** channels, "
+        f"**{created_count}** roles, "
+        f"**1** registration channel\n\n"
+        f"{Theme.SEP}",
+        Theme.SUCCESS,
+        f"Provisioned by {provisioned_by or 'Autopilot'}"
     )
     return embed
