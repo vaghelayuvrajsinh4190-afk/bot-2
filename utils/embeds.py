@@ -44,7 +44,7 @@ def build_roster_embed(group_doc, registrations, capacity):
         capacity: Max teams in the group
     """
     group_id = group_doc.get("group_id", "????")
-    count = len(registrations)
+    count = group_doc.get("current_count", 0)
     display_name = f"Group {group_id}"
     status = Theme.group_status(count, capacity)
     color = Theme.group_color(count, capacity)
@@ -60,18 +60,42 @@ def build_roster_embed(group_doc, registrations, capacity):
     m2_start = match2.get("start", "TBD")
     m2_map = match2.get("map", "TBD")
 
-    # Build 16-slot roster lines with visual indicators
+    reserved_slots = group_doc.get("reserved_slots", 0)
+    reserved_teams = group_doc.get("reserved_teams", {})
+
+    # Map public registrations by their slot number
+    reg_by_slot = {r.get("slot_number"): r for r in registrations if r.get("slot_number") is not None}
+    unassigned_regs = [r for r in registrations if r.get("slot_number") is None]
+
+    # Build roster lines
     slot_lines = []
     for i in range(capacity):
-        num = f"{i+1:02d}"
-        if i < len(registrations):
-            reg = registrations[i]
-            tn = reg.get("team_name", "Unknown")
-            tn = (tn[:18] + '..') if len(tn) > 18 else tn
-            captain = reg.get("owner_id", "")
-            slot_lines.append(f"`{num}` 🟢 **{tn}** › <@{captain}>")
+        slot_num = i + 1
+        num = f"{slot_num:02d}"
+        if slot_num <= reserved_slots:
+            # Reserved slot
+            if str(slot_num) in reserved_teams:
+                team_name = reserved_teams[str(slot_num)]
+                team_name = (team_name[:18] + '..') if len(team_name) > 18 else team_name
+                slot_lines.append(f"`{num}` 🟢 **{team_name}** › *Reserved*")
+            else:
+                slot_lines.append(f"`{num}` 🔴 **RESERVED**")
         else:
-            slot_lines.append(f"`{num}` ⚪ *Available*")
+            # Public registration slot
+            if slot_num in reg_by_slot:
+                reg = reg_by_slot[slot_num]
+                tn = reg.get("team_name", "Unknown")
+                tn = (tn[:18] + '..') if len(tn) > 18 else tn
+                captain = reg.get("owner_id", "")
+                slot_lines.append(f"`{num}` 🟢 **{tn}** › <@{captain}>")
+            elif unassigned_regs:
+                reg = unassigned_regs.pop(0)
+                tn = reg.get("team_name", "Unknown")
+                tn = (tn[:18] + '..') if len(tn) > 18 else tn
+                captain = reg.get("owner_id", "")
+                slot_lines.append(f"`{num}` 🟢 **{tn}** › <@{captain}>")
+            else:
+                slot_lines.append(f"`{num}` ⚪ *Available*")
 
     # Split into two columns if capacity > 8
     if capacity > 8:

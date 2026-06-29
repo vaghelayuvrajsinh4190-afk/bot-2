@@ -18,7 +18,7 @@ from discord import app_commands
 from config import (
     Theme, TIMEZONE_OFFSET,
     DEFAULT_GROUP_CAPACITY, DEFAULT_GROUP_COUNT,
-    DEFAULT_CATEGORY_NAME,
+    DEFAULT_CATEGORY_NAME, DEFAULT_RESERVED_SLOTS,
     REGISTRATION_OPEN_HOUR, REGISTRATION_OPEN_MINUTE,
     load_schedule, save_schedule, get_schedule_for_group
 )
@@ -52,7 +52,7 @@ def get_today_display():
     return local_now.strftime("%d %B").upper()
 
 
-def generate_group_id(index: int, event_id: str):
+def generate_group_id(index: int):
     """Generate a group ID like G0001, G0002, etc."""
     return f"G{index:04d}"
 
@@ -119,7 +119,7 @@ class ProvisioningCog(commands.Cog):
 
         # Get yesterday's event ID
         yesterday = (local_now - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
-        yesterday_groups = group_model.get_all_groups(yesterday, include_archived=True)
+        yesterday_groups = await asyncio.to_thread(group_model.get_all_groups, yesterday, True)
 
         # ── Step 1: Channel Cleanup ──
         if yesterday_groups:
@@ -127,8 +127,8 @@ class ProvisioningCog(commands.Cog):
             print(f"🧹 Cleaned up {len(yesterday_groups)} groups from {yesterday}", flush=True)
 
         # ── Step 2: Clean expired data ──
-        expired_bans = punishment.cleanup_expired_bans()
-        expired_profiles = team_profile.cleanup_expired_profiles()
+        expired_bans = await asyncio.to_thread(punishment.cleanup_expired_bans)
+        expired_profiles = await asyncio.to_thread(team_profile.cleanup_expired_profiles)
         if expired_bans:
             print(f"🧹 Expired {expired_bans} bans", flush=True)
         if expired_profiles:
@@ -144,17 +144,17 @@ class ProvisioningCog(commands.Cog):
 
         # ── Step 5: Auto-Provision New Day ──
         event_id = get_today_event_id()
-        count = int(get_config("default_group_count", DEFAULT_GROUP_COUNT))
-        cap = int(get_config("default_group_capacity", DEFAULT_GROUP_CAPACITY))
+        count = int(await asyncio.to_thread(get_config, "default_group_count", DEFAULT_GROUP_COUNT))
+        cap = int(await asyncio.to_thread(get_config, "default_group_capacity", DEFAULT_GROUP_CAPACITY))
 
         # Use configurable category name (no date logic)
-        category_name = get_config("default_category_name", DEFAULT_CATEGORY_NAME)
+        category_name = await asyncio.to_thread(get_config, "default_category_name", DEFAULT_CATEGORY_NAME)
 
         await self._auto_provision(guild, event_id, count, cap, category_name)
         print(f"📦 Auto-provisioned {count} groups for {event_id}", flush=True)
 
         # ── Log to admin channel ──
-        log_channel_id = get_channel_config("admin_log")
+        log_channel_id = await asyncio.to_thread(get_channel_config, "admin_log")
         if log_channel_id:
             log_ch = guild.get_channel(log_channel_id)
             if log_ch:
@@ -214,7 +214,7 @@ class ProvisioningCog(commands.Cog):
         except Exception as e:
             print(f"⚠️ Failed to notify registration open subscribers: {e}", flush=True)
 
-        log_channel_id = get_channel_config("admin_log")
+        log_channel_id = await asyncio.to_thread(get_channel_config, "admin_log")
         if log_channel_id:
             log_ch = guild.get_channel(log_channel_id)
             if log_ch:
@@ -234,7 +234,7 @@ class ProvisioningCog(commands.Cog):
 
     async def _reset_registration_board(self, guild):
         """Reset the permanent registration board embed to 0/0 (empty)."""
-        reg_channel_id = get_channel_config("register")
+        reg_channel_id = await asyncio.to_thread(get_channel_config, "register")
         if not reg_channel_id:
             return
 
@@ -242,7 +242,7 @@ class ProvisioningCog(commands.Cog):
         if not channel:
             return
 
-        slot_msg_id = get_config("slot_message_id")
+        slot_msg_id = await asyncio.to_thread(get_config, "slot_message_id")
         if not slot_msg_id:
             return
 
@@ -257,7 +257,7 @@ class ProvisioningCog(commands.Cog):
 
     async def _lock_registration(self, guild):
         """Change the register button to disabled 🔒 Registration Closed."""
-        reg_channel_id = get_channel_config("register")
+        reg_channel_id = await asyncio.to_thread(get_channel_config, "register")
         if not reg_channel_id:
             return
 
@@ -265,7 +265,7 @@ class ProvisioningCog(commands.Cog):
         if not channel:
             return
 
-        slot_msg_id = get_config("slot_message_id")
+        slot_msg_id = await asyncio.to_thread(get_config, "slot_message_id")
         if not slot_msg_id:
             return
 
@@ -281,7 +281,7 @@ class ProvisioningCog(commands.Cog):
 
     async def _unlock_registration(self, guild):
         """Change the register button back to active 📥 Register Team."""
-        reg_channel_id = get_channel_config("register")
+        reg_channel_id = await asyncio.to_thread(get_channel_config, "register")
         if not reg_channel_id:
             return
 
@@ -289,7 +289,7 @@ class ProvisioningCog(commands.Cog):
         if not channel:
             return
 
-        slot_msg_id = get_config("slot_message_id")
+        slot_msg_id = await asyncio.to_thread(get_config, "slot_message_id")
         if not slot_msg_id:
             return
 
@@ -298,7 +298,7 @@ class ProvisioningCog(commands.Cog):
 
             # Also refresh the board embed with current groups
             event_id = get_today_event_id()
-            all_groups = group_model.get_all_groups(event_id)
+            all_groups = await asyncio.to_thread(group_model.get_all_groups, event_id)
             embed = build_registration_board_embed(all_groups)
 
             from cogs.registration import PersistentRegisterView
@@ -319,7 +319,7 @@ class ProvisioningCog(commands.Cog):
         from database import set_channel_config, set_config
 
         # 1. Ensure register channel
-        reg_channel_id = get_channel_config("register")
+        reg_channel_id = await asyncio.to_thread(get_channel_config, "register")
         reg_channel = guild.get_channel(reg_channel_id) if reg_channel_id else None
 
         if not reg_channel:
@@ -336,7 +336,7 @@ class ProvisioningCog(commands.Cog):
                     print(f"❌ Failed to create register channel: {e}", flush=True)
 
             if reg_channel:
-                set_channel_config("register", reg_channel.id)
+                await asyncio.to_thread(set_channel_config, "register", reg_channel.id)
 
         # Configure register channel permissions (disable sending messages for @everyone)
         if reg_channel:
@@ -358,7 +358,7 @@ class ProvisioningCog(commands.Cog):
                 print(f"⚠️ Failed to set register channel permissions: {e}", flush=True)
 
         # 2. Ensure registered-teams channel
-        teams_channel_id = get_channel_config("registered_teams")
+        teams_channel_id = await asyncio.to_thread(get_channel_config, "registered_teams")
         teams_channel = guild.get_channel(teams_channel_id) if teams_channel_id else None
 
         if not teams_channel:
@@ -373,7 +373,7 @@ class ProvisioningCog(commands.Cog):
                     print(f"❌ Failed to create registered-teams channel: {e}", flush=True)
 
             if teams_channel:
-                set_channel_config("registered_teams", teams_channel.id)
+                await asyncio.to_thread(set_channel_config, "registered_teams", teams_channel.id)
 
         # Configure registered-teams permissions: read-only for public
         if teams_channel:
@@ -388,7 +388,7 @@ class ProvisioningCog(commands.Cog):
                 print(f"⚠️ Failed to set registered-teams permissions: {e}", flush=True)
 
         # 3. Ensure admin-log channel
-        log_channel_id = get_channel_config("admin_log")
+        log_channel_id = await asyncio.to_thread(get_channel_config, "admin_log")
         log_channel = guild.get_channel(log_channel_id) if log_channel_id else None
 
         if not log_channel:
@@ -408,11 +408,11 @@ class ProvisioningCog(commands.Cog):
                     print(f"❌ Failed to create admin-log channel: {e}", flush=True)
 
             if log_channel:
-                set_channel_config("admin_log", log_channel.id)
+                await asyncio.to_thread(set_channel_config, "admin_log", log_channel.id)
 
         # 4. Ensure registration board message is posted in the register channel
         if reg_channel:
-            slot_msg_id = get_config("slot_message_id")
+            slot_msg_id = await asyncio.to_thread(get_config, "slot_message_id")
             board_msg = None
             if slot_msg_id:
                 try:
@@ -422,13 +422,13 @@ class ProvisioningCog(commands.Cog):
 
             if not board_msg:
                 # Post the board
-                all_groups = group_model.get_all_groups(event_id)
+                all_groups = await asyncio.to_thread(group_model.get_all_groups, event_id)
                 embed = build_registration_board_embed(all_groups)
                 from cogs.registration import PersistentRegisterView
                 view = PersistentRegisterView(locked=False)
                 try:
                     board_msg = await reg_channel.send(embed=embed, view=view)
-                    set_config("slot_message_id", board_msg.id)
+                    await asyncio.to_thread(set_config, "slot_message_id", board_msg.id)
                     print(f"✅ Auto-deployed registration board message: {board_msg.id}", flush=True)
                 except Exception as e:
                     print(f"❌ Failed to deploy registration board message: {e}", flush=True)
@@ -445,7 +445,7 @@ class ProvisioningCog(commands.Cog):
 
         # Use provided category name or configurable default (no date logic)
         if not category_name:
-            category_name = get_config("default_category_name", DEFAULT_CATEGORY_NAME)
+            category_name = await asyncio.to_thread(get_config, "default_category_name", DEFAULT_CATEGORY_NAME)
 
         # Create category
         category = await create_day_category(guild, category_name)
@@ -453,7 +453,7 @@ class ProvisioningCog(commands.Cog):
             print("❌ Failed to create day category.", flush=True)
             return []
 
-        set_config(f"category_{event_id}", category.id)
+        await asyncio.to_thread(set_config, f"category_{event_id}", category.id)
 
         # ── AUTO-CREATE #registration CHANNEL INSIDE CATEGORY ──
         reg_in_category = None
@@ -485,25 +485,28 @@ class ProvisioningCog(commands.Cog):
         # ── AUTO-DEPLOY REGISTRATION EMBED + PERSISTENT BUTTON ──
         if reg_in_category:
             try:
-                all_groups_current = group_model.get_all_groups(event_id)
+                all_groups_current = await asyncio.to_thread(group_model.get_all_groups, event_id)
                 embed = build_registration_board_embed(all_groups_current)
                 from cogs.registration import PersistentRegisterView
                 view = PersistentRegisterView(locked=False)
                 board_msg = await reg_in_category.send(embed=embed, view=view)
 
                 # Store references for live-updating
-                set_config(f"category_reg_channel_{event_id}", reg_in_category.id)
-                set_config(f"category_reg_msg_{event_id}", board_msg.id)
+                await asyncio.to_thread(set_config, f"category_reg_channel_{event_id}", reg_in_category.id)
+                await asyncio.to_thread(set_config, f"category_reg_msg_{event_id}", board_msg.id)
                 print(f"✅ Auto-deployed registration board in #registration: {board_msg.id}", flush=True)
             except Exception as e:
                 print(f"⚠️ Failed to deploy registration board in #registration: {e}", flush=True)
 
             await asyncio.sleep(1.0)
 
+        # Get default reserved slots count
+        default_res = int(await asyncio.to_thread(get_config, "default_reserved_slots", DEFAULT_RESERVED_SLOTS))
+
         # ── CREATE GROUPS WITH PROPER RATE-LIMIT PACING ──
         created_groups = []
         for i in range(1, count + 1):
-            group_id = generate_group_id(i, event_id)
+            group_id = generate_group_id(i)
 
             # Get schedule for this group number
             sched = None
@@ -535,7 +538,8 @@ class ProvisioningCog(commands.Cog):
             await asyncio.sleep(0.5)  # Pace after channel creation
 
             # Insert group doc
-            group_doc = group_model.create_group(
+            group_doc = await asyncio.to_thread(
+                group_model.create_group,
                 event_id=event_id,
                 group_id=group_id,
                 capacity=capacity,
@@ -543,16 +547,17 @@ class ProvisioningCog(commands.Cog):
                 match2=match2,
                 channel_id=channel.id,
                 role_id=role.id,
-                category_id=category.id
+                category_id=category.id,
+                reserved_slots=default_res
             )
             created_groups.append(group_doc)
 
             # Post initial roster embed in the group channel (API call 3)
             from models import registration as reg_model
-            regs = reg_model.get_group_registrations(group_id, event_id)
+            regs = await asyncio.to_thread(reg_model.get_group_registrations, group_id, event_id)
             roster_embed = build_roster_embed(group_doc, regs, capacity)
             msg = await channel.send(embed=roster_embed)
-            group_model.update_roster_message(event_id, group_id, msg.id)
+            await asyncio.to_thread(group_model.update_roster_message, event_id, group_id, msg.id)
 
             await asyncio.sleep(0.5)  # Pace after embed send
 
@@ -570,14 +575,14 @@ class ProvisioningCog(commands.Cog):
                 await asyncio.sleep(3.0)
 
         # ── UPDATE REGISTRATION BOARDS WITH NEW GROUPS ──
-        all_groups = group_model.get_all_groups(event_id)
+        all_groups = await asyncio.to_thread(group_model.get_all_groups, event_id)
 
         # Update the permanent board in #register-here
-        reg_channel_id = get_channel_config("register")
+        reg_channel_id = await asyncio.to_thread(get_channel_config, "register")
         if reg_channel_id:
             reg_channel = guild.get_channel(reg_channel_id)
             if reg_channel:
-                slot_msg_id = get_config("slot_message_id")
+                slot_msg_id = await asyncio.to_thread(get_config, "slot_message_id")
                 if slot_msg_id:
                     try:
                         embed = build_registration_board_embed(all_groups)
@@ -588,7 +593,7 @@ class ProvisioningCog(commands.Cog):
 
         # Update the category-local board in #registration
         if reg_in_category:
-            cat_reg_msg_id = get_config(f"category_reg_msg_{event_id}")
+            cat_reg_msg_id = await asyncio.to_thread(get_config, f"category_reg_msg_{event_id}")
             if cat_reg_msg_id:
                 try:
                     embed = build_registration_board_embed(all_groups)
@@ -623,14 +628,14 @@ class ProvisioningCog(commands.Cog):
         event_id = get_today_event_id()
 
         # Check if already provisioned
-        existing = group_model.get_all_groups(event_id, include_archived=True)
+        existing = await asyncio.to_thread(group_model.get_all_groups, event_id, True)
         if existing:
             if force:
                 # Auto-deprovision first
                 await self._cleanup_event(interaction.guild, event_id, existing)
                 # Delete all group docs for this event (hard delete for fresh start)
                 from database import groups as groups_collection
-                groups_collection.delete_many({"event_id": event_id})
+                await asyncio.to_thread(groups_collection.delete_many, {"event_id": event_id})
             else:
                 # Check if groups are actually alive (channels exist)
                 alive = any(
@@ -655,13 +660,13 @@ class ProvisioningCog(commands.Cog):
                     # Stale data — channels were deleted manually, clean up DB
                     await self._cleanup_event(interaction.guild, event_id, existing)
                     from database import groups as groups_collection
-                    groups_collection.delete_many({"event_id": event_id})
+                    await asyncio.to_thread(groups_collection.delete_many, {"event_id": event_id})
 
-        count = group_count or int(get_config("default_group_count", DEFAULT_GROUP_COUNT))
-        cap = capacity or int(get_config("default_group_capacity", DEFAULT_GROUP_CAPACITY))
+        count = group_count or int(await asyncio.to_thread(get_config, "default_group_count", DEFAULT_GROUP_COUNT))
+        cap = capacity or int(await asyncio.to_thread(get_config, "default_group_capacity", DEFAULT_GROUP_CAPACITY))
 
         # Resolve category name: param > config > default constant
-        resolved_name = category_name or get_config("default_category_name", DEFAULT_CATEGORY_NAME)
+        resolved_name = category_name or await asyncio.to_thread(get_config, "default_category_name", DEFAULT_CATEGORY_NAME)
 
         await interaction.response.defer()
 
@@ -689,7 +694,7 @@ class ProvisioningCog(commands.Cog):
     @app_commands.checks.has_permissions(administrator=True)
     async def add_groups(self, interaction: discord.Interaction, count: int = 1, capacity: int = None):
         event_id = get_today_event_id()
-        existing = group_model.get_all_groups(event_id)
+        existing = await asyncio.to_thread(group_model.get_all_groups, event_id)
 
         if not existing:
             await interaction.response.send_message(
@@ -711,12 +716,15 @@ class ProvisioningCog(commands.Cog):
             )
             return
 
+        # Get default reserved slots count
+        default_res = int(await asyncio.to_thread(get_config, "default_reserved_slots", DEFAULT_RESERVED_SLOTS))
+
         start_index = len(existing) + 1
         created = []
         schedule = load_schedule()
 
         for i in range(start_index, start_index + count):
-            group_id = generate_group_id(i, event_id)
+            group_id = generate_group_id(i)
 
             # Create role with rate-limit pacing
             role = await get_or_create_role(guild, group_id, discord.Color.blue())
@@ -744,17 +752,18 @@ class ProvisioningCog(commands.Cog):
                 match1 = {"idp": "TBD", "start": "TBD", "map": "TBD"}
                 match2 = {"idp": "TBD", "start": "TBD", "map": "TBD"}
 
-            group_doc = group_model.create_group(
+            group_doc = await asyncio.to_thread(
+                group_model.create_group,
                 event_id, group_id, cap, match1, match2,
-                channel.id, role.id, category.id
+                channel.id, role.id, category.id, default_res
             )
             created.append(group_doc)
 
             # Post roster embed
             from models import registration as reg_model
-            regs = reg_model.get_group_registrations(group_id, event_id)
+            regs = await asyncio.to_thread(reg_model.get_group_registrations, group_id, event_id)
             msg = await channel.send(embed=build_roster_embed(group_doc, regs, cap))
-            group_model.update_roster_message(event_id, group_id, msg.id)
+            await asyncio.to_thread(group_model.update_roster_message, event_id, group_id, msg.id)
 
             await asyncio.sleep(0.5)
 
@@ -787,7 +796,7 @@ class ProvisioningCog(commands.Cog):
     @app_commands.checks.has_permissions(administrator=True)
     async def deprovision(self, interaction: discord.Interaction):
         event_id = get_today_event_id()
-        existing = group_model.get_all_groups(event_id, include_archived=True)
+        existing = await asyncio.to_thread(group_model.get_all_groups, event_id, True)
 
         if not existing:
             await interaction.response.send_message(
@@ -823,7 +832,7 @@ class ProvisioningCog(commands.Cog):
             )
             return
 
-        set_config("default_group_count", amount)
+        await asyncio.to_thread(set_config, "default_group_count", amount)
         await interaction.response.send_message(
             embed=success_embed(
                 "✅ Group Count Updated",
@@ -849,7 +858,7 @@ class ProvisioningCog(commands.Cog):
             )
             return
 
-        set_config("default_category_name", name)
+        await asyncio.to_thread(set_config, "default_category_name", name)
         await interaction.response.send_message(
             embed=success_embed(
                 "✅ Category Name Updated",
@@ -984,11 +993,11 @@ class ProvisioningCog(commands.Cog):
             await cleanup_category(guild, cat_id)
             await asyncio.sleep(0.5)
 
-        group_model.archive_groups(event_id)
+        await asyncio.to_thread(group_model.archive_groups, event_id)
 
     async def _refresh_availability(self, guild, event_id):
         """Refresh the slot availability embed."""
-        reg_channel_id = get_channel_config("register")
+        reg_channel_id = await asyncio.to_thread(get_channel_config, "register")
         if not reg_channel_id:
             return
 
@@ -996,10 +1005,10 @@ class ProvisioningCog(commands.Cog):
         if not channel:
             return
 
-        all_groups = group_model.get_all_groups(event_id)
+        all_groups = await asyncio.to_thread(group_model.get_all_groups, event_id)
         embed = build_registration_board_embed(all_groups)
 
-        slot_msg_id = get_config("slot_message_id")
+        slot_msg_id = await asyncio.to_thread(get_config, "slot_message_id")
         if slot_msg_id:
             try:
                 msg = await channel.fetch_message(slot_msg_id)
@@ -1008,7 +1017,7 @@ class ProvisioningCog(commands.Cog):
             except discord.NotFound:
                 pass
 
-        avail_msg_id = get_config(f"slot_availability_msg_{event_id}")
+        avail_msg_id = await asyncio.to_thread(get_config, f"slot_availability_msg_{event_id}")
         if avail_msg_id:
             try:
                 msg = await channel.fetch_message(avail_msg_id)

@@ -25,6 +25,7 @@ TIMEZONE_OFFSET = 5.5  # IST = UTC+5:30
 # Default group settings (admin can override via /config)
 DEFAULT_GROUP_CAPACITY = 21
 DEFAULT_GROUP_COUNT = 12  # Blueprint: 12 groups
+DEFAULT_RESERVED_SLOTS = 1   # Slot 01 reserved by default
 DEFAULT_REMINDER_LEAD_MINUTES = 30
 DEFAULT_LOCK_MINUTES = 20  # lock cancel/reschedule this many min before match
 
@@ -44,13 +45,31 @@ SCHEDULE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "schedu
 
 
 def load_schedule():
-    """Load the daily schedule from schedule.json."""
+    """Load the daily schedule from MongoDB (with fallback to schedule.json for migration)."""
+    # Try MongoDB first
+    try:
+        from database import get_config
+        db_schedule = get_config("schedule")
+        if db_schedule is not None:
+            return db_schedule
+    except Exception as e:
+        print(f"⚠️ Failed to load schedule from MongoDB: {e}", flush=True)
+
+    # Fallback: read from schedule.json (first-time migration)
     try:
         with open(SCHEDULE_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
-        return data.get("groups", [])
+        groups_data = data.get("groups", [])
+        # Auto-migrate to MongoDB for persistence
+        try:
+            from database import set_config
+            set_config("schedule", groups_data)
+            print("✅ Migrated schedule.json to MongoDB.", flush=True)
+        except Exception:
+            pass
+        return groups_data
     except FileNotFoundError:
-        print("⚠️ schedule.json not found, using empty schedule.", flush=True)
+        print("⚠️ schedule.json not found and no schedule in MongoDB, using empty schedule.", flush=True)
         return []
     except json.JSONDecodeError as e:
         print(f"⚠️ schedule.json parse error: {e}", flush=True)
@@ -58,14 +77,22 @@ def load_schedule():
 
 
 def save_schedule(groups_data):
-    """Save updated schedule data back to schedule.json."""
+    """Save updated schedule data to MongoDB (and local file as backup)."""
+    try:
+        from database import set_config
+        set_config("schedule", groups_data)
+    except Exception as e:
+        print(f"❌ Failed to save schedule to MongoDB: {e}", flush=True)
+        return False
+
+    # Also write to local file as backup (best-effort)
     try:
         with open(SCHEDULE_FILE, "w", encoding="utf-8") as f:
             json.dump({"groups": groups_data}, f, indent=4, ensure_ascii=False)
-        return True
-    except Exception as e:
-        print(f"❌ Failed to save schedule.json: {e}", flush=True)
-        return False
+    except Exception:
+        pass  # Non-fatal — MongoDB is the source of truth now
+
+    return True
 
 
 def get_schedule_for_group(group_number: int):

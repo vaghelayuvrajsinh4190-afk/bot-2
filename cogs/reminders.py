@@ -262,7 +262,7 @@ class GroupSelectDropdown(ui.Select):
             return
 
         # Update registration
-        await asyncio.to_thread(reg_model.move_registration, owner_id, event_id, new_group_id)
+        await asyncio.to_thread(reg_model.move_registration, owner_id, event_id, new_group_id, new_group["current_count"])
 
         # Swap roles
         guild = interaction.guild

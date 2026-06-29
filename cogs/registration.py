@@ -21,7 +21,7 @@ from utils.embeds import (
     build_registration_board_embed
 )
 from models import team_profile, group as group_model, registration as reg_model, punishment
-from database import get_config
+from database import get_config, set_config
 
 # In-memory cache for multi-step registrations to bridge Step 1 and Step 2
 registration_cache = {}
@@ -393,7 +393,8 @@ class ConfirmRegistrationView(ui.View):
             group_id=assigned_group["group_id"],
             team_name=self.team_name,
             players=self.players,
-            teammate_ids=teammate_ids
+            teammate_ids=teammate_ids,
+            slot_number=assigned_group["current_count"]
         )
 
         # Save teammate IDs to profile asynchronously
@@ -427,6 +428,7 @@ class ConfirmRegistrationView(ui.View):
             "🎯 Registration Complete!",
             f"🏆 **Team** — `{self.team_name}`\n"
             f"⚙️ **Assigned Group** — `{group_id}`\n"
+            f"🎰 **Roster Slot** — `Slot {assigned_group['current_count']:02d}`\n"
             f"📅 **Date** — `{event_date_display}`\n\n"
 
             f"╭── 🎮 **Match Schedule** ──╮\n"

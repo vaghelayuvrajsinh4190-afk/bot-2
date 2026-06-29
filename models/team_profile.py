@@ -5,6 +5,7 @@ Teams persist for 30 days so returning players can reuse them.
 """
 
 import datetime
+import re
 from database import team_profiles
 from config import PROFILE_EXPIRY_DAYS
 
@@ -85,7 +86,8 @@ def check_duplicate_team_name(team_name: str, exclude_owner_id: str = None):
     Check if a team name is already taken by another user.
     Returns (is_duplicate, existing_owner_id or None).
     """
-    query = {"team_name": {"$regex": f"^{team_name.strip()}$", "$options": "i"}}
+    safe = re.escape(team_name.strip())
+    query = {"team_name": {"$regex": f"^{safe}$", "$options": "i"}}
     if exclude_owner_id:
         query["owner_id"] = {"$ne": exclude_owner_id}
 
@@ -100,7 +102,7 @@ def check_duplicate_player(player_name: str, exclude_owner_id: str = None):
     Check if a player name exists in any other team's roster.
     Returns (is_duplicate, team_name or None).
     """
-    clean = player_name.strip().lower()
+    clean = re.escape(player_name.strip().lower())
     query = {"players": {"$regex": f"^{clean}$", "$options": "i"}}
     if exclude_owner_id:
         query["owner_id"] = {"$ne": exclude_owner_id}

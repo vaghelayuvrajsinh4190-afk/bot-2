@@ -8,11 +8,12 @@ Contains:
 """
 
 import datetime
+import asyncio
 import discord
 from discord.ext import commands
 from discord import app_commands, ui
 
-from config import Theme, TIMEZONE_OFFSET, DEFAULT_LOCK_MINUTES, get_rank_emoji
+from config import Theme, TIMEZONE_OFFSET, DEFAULT_LOCK_MINUTES, get_rank_emoji, DEFAULT_RESERVED_SLOTS
 from utils.embeds import make_embed, error_embed, success_embed, build_roster_embed
 from utils.permissions import grant_group_access, revoke_group_access
 from models import group as group_model, registration as reg_model, punishment
@@ -126,12 +127,14 @@ class MoveTeamModal(ui.Modal, title="🔀 Move Team"):
 
         # Atomic move (admin override — ignores lock)
         from database import groups as groups_collection
-        groups_collection.update_one(
+        from pymongo import ReturnDocument
+        new_group_doc = groups_collection.find_one_and_update(
             {"event_id": event_id, "group_id": new_gid},
-            {"$inc": {"current_count": 1}}
+            {"$inc": {"current_count": 1}},
+            return_document=ReturnDocument.AFTER
         )
         group_model.release_slot(event_id, old_gid)
-        reg_model.move_registration(owner_id, event_id, new_gid)
+        reg_model.move_registration(owner_id, event_id, new_gid, new_group_doc.get("current_count"))
 
         # Swap roles
         guild = interaction.guild
@@ -676,7 +679,7 @@ class ChangeGroupSelectDropdown(ui.Select):
             return
 
         # Update registration
-        reg_model.move_registration(owner_id, event_id, new_group_id)
+        reg_model.move_registration(owner_id, event_id, new_group_id, new_group["current_count"])
 
         # Swap roles
         guild = interaction.guild
@@ -785,6 +788,7 @@ class AdminPanelCog(commands.Cog):
         app_commands.Choice(name="lock_minutes", value="lock_minutes"),
         app_commands.Choice(name="registration_open_hour", value="registration_open_hour"),
         app_commands.Choice(name="registration_open_minute", value="registration_open_minute"),
+        app_commands.Choice(name="default_reserved_slots", value="default_reserved_slots"),
     ])
     @app_commands.checks.has_permissions(administrator=True)
     async def config_cmd(
@@ -839,6 +843,12 @@ class AdminPanelCog(commands.Cog):
                 if setting == "registration_open_minute" and (int_value < 0 or int_value > 59):
                     await interaction.response.send_message(
                         embed=error_embed("❌ Invalid Value", "registration_open_minute must be between 0 and 59."),
+                        ephemeral=True
+                    )
+                    return
+                if setting == "default_reserved_slots" and (int_value < 0 or int_value > 3):
+                    await interaction.response.send_message(
+                        embed=error_embed("❌ Invalid Value", "default_reserved_slots must be between 0 and 3."),
                         ephemeral=True
                     )
                     return
@@ -958,6 +968,212 @@ class AdminPanelCog(commands.Cog):
             "🔨 Active Bans",
             f"{Theme.SEP}\n\n" + "\n".join(lines) + f"\n\n{Theme.SEP}",
             Theme.ERROR
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    # ─────────────── /reserve COMMAND GROUP ───────────────
+
+    reserve_group = app_commands.Group(name="reserve", description="[Admin] Manage reserved slots")
+
+    @reserve_group.command(name="slots", description="Set the number of reserved slots per group (0-3)")
+    @app_commands.describe(count="Number of reserved slots (0 to 3)")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def reserve_slots(self, interaction: discord.Interaction, count: int):
+        if count < 0 or count > 3:
+            await interaction.response.send_message(
+                embed=error_embed("❌ Invalid Count", "Reserved slots must be between 0 and 3."),
+                ephemeral=True
+            )
+            return
+
+        await interaction.response.defer(ephemeral=True)
+
+        # Save as default for future provisions
+        await asyncio.to_thread(set_config, "default_reserved_slots", count)
+
+        # Update all groups for today's event
+        event_id = get_today_event_id()
+        updated_count = await asyncio.to_thread(group_model.set_all_reserved_slots, event_id, count)
+
+        # Refresh all rosters and registers
+        guild = interaction.guild
+        all_groups = await asyncio.to_thread(group_model.get_all_groups, event_id)
+        for g in all_groups:
+            # Refresh roster in the group channel
+            ch = guild.get_channel(g.get("channel_id"))
+            if ch:
+                regs = await asyncio.to_thread(reg_model.get_group_registrations, g["group_id"], event_id)
+                embed = build_roster_embed(g, regs, g["capacity"])
+                msg_id = g.get("roster_message_id")
+                if msg_id:
+                    try:
+                        msg = await ch.fetch_message(msg_id)
+                        await msg.edit(embed=embed)
+                    except discord.NotFound:
+                        pass
+
+        # Update slot availability board
+        cog = interaction.client.get_cog("ProvisioningCog")
+        if cog:
+            await cog._refresh_availability(guild, event_id)
+
+        await interaction.followup.send(
+            embed=success_embed(
+                "✅ Reserved Slots Updated",
+                f"{Theme.SEP}\n\n"
+                f"Default reserved slots count set to: **{count}**\n"
+                f"Updated **{updated_count}** active groups for today.\n\n{Theme.SEP}"
+            ),
+            ephemeral=True
+        )
+
+    @reserve_group.command(name="fill", description="Fill a reserved slot in a group with a team name")
+    @app_commands.describe(
+        group_id="Group ID (e.g. G0001)",
+        slot="Roster slot number (1 to reserved count)",
+        team_name="Name of the team to assign"
+    )
+    @app_commands.checks.has_permissions(administrator=True)
+    async def reserve_fill(self, interaction: discord.Interaction, group_id: str, slot: int, team_name: str):
+        event_id = get_today_event_id()
+        group_doc = await asyncio.to_thread(group_model.get_group, event_id, group_id)
+        if not group_doc:
+            await interaction.response.send_message(
+                embed=error_embed("❌ Not Found", f"Group `{group_id}` not found for today."),
+                ephemeral=True
+            )
+            return
+
+        reserved = group_doc.get("reserved_slots", 0)
+        if slot < 1 or slot > reserved:
+            await interaction.response.send_message(
+                embed=error_embed("❌ Invalid Slot", f"Group `{group_id}` only has `{reserved}` reserved slots (1-{reserved})."),
+                ephemeral=True
+            )
+            return
+
+        await interaction.response.defer(ephemeral=True)
+
+        updated_group = await asyncio.to_thread(group_model.fill_reserved_slot, event_id, group_id, slot, team_name)
+        if not updated_group:
+            await interaction.followup.send(
+                embed=error_embed("❌ Error", "Could not fill reserved slot."),
+                ephemeral=True
+            )
+            return
+
+        # Refresh roster in the group channel
+        guild = interaction.guild
+        ch = guild.get_channel(updated_group.get("channel_id"))
+        if ch:
+            regs = await asyncio.to_thread(reg_model.get_group_registrations, group_id, event_id)
+            embed = build_roster_embed(updated_group, regs, updated_group["capacity"])
+            msg_id = updated_group.get("roster_message_id")
+            if msg_id:
+                try:
+                    msg = await ch.fetch_message(msg_id)
+                    await msg.edit(embed=embed)
+                except discord.NotFound:
+                    pass
+
+        await interaction.followup.send(
+            embed=success_embed(
+                "✅ Slot Filled",
+                f"{Theme.SEP}\n\n"
+                f"Filled Slot **{slot:02d}** in **{group_id}** with team **{team_name}**.\n\n{Theme.SEP}"
+            ),
+            ephemeral=True
+        )
+
+    @reserve_group.command(name="clear", description="Clear a filled reserved slot back to empty RESERVED status")
+    @app_commands.describe(
+        group_id="Group ID (e.g. G0001)",
+        slot="Roster slot number to clear"
+    )
+    @app_commands.checks.has_permissions(administrator=True)
+    async def reserve_clear(self, interaction: discord.Interaction, group_id: str, slot: int):
+        event_id = get_today_event_id()
+        group_doc = await asyncio.to_thread(group_model.get_group, event_id, group_id)
+        if not group_doc:
+            await interaction.response.send_message(
+                embed=error_embed("❌ Not Found", f"Group `{group_id}` not found for today."),
+                ephemeral=True
+            )
+            return
+
+        reserved = group_doc.get("reserved_slots", 0)
+        if slot < 1 or slot > reserved:
+            await interaction.response.send_message(
+                embed=error_embed("❌ Invalid Slot", f"Group `{group_id}` only has `{reserved}` reserved slots (1-{reserved})."),
+                ephemeral=True
+            )
+            return
+
+        await interaction.response.defer(ephemeral=True)
+
+        updated_group = await asyncio.to_thread(group_model.clear_reserved_slot, event_id, group_id, slot)
+        if not updated_group:
+            await interaction.followup.send(
+                embed=error_embed("❌ Error", "Could not clear reserved slot."),
+                ephemeral=True
+            )
+            return
+
+        # Refresh roster in the group channel
+        guild = interaction.guild
+        ch = guild.get_channel(updated_group.get("channel_id"))
+        if ch:
+            regs = await asyncio.to_thread(reg_model.get_group_registrations, group_id, event_id)
+            embed = build_roster_embed(updated_group, regs, updated_group["capacity"])
+            msg_id = updated_group.get("roster_message_id")
+            if msg_id:
+                try:
+                    msg = await ch.fetch_message(msg_id)
+                    await msg.edit(embed=embed)
+                except discord.NotFound:
+                    pass
+
+        await interaction.followup.send(
+            embed=success_embed(
+                "✅ Slot Cleared",
+                f"{Theme.SEP}\n\n"
+                f"Cleared Slot **{slot:02d}** in **{group_id}** back to reserved status.\n\n{Theme.SEP}"
+            ),
+            ephemeral=True
+        )
+
+    @reserve_group.command(name="view", description="View reserved slots configuration and status")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def reserve_view(self, interaction: discord.Interaction):
+        event_id = get_today_event_id()
+        all_groups = await asyncio.to_thread(group_model.get_all_groups, event_id)
+        if not all_groups:
+            await interaction.response.send_message(
+                embed=error_embed("❌ No Groups", "No groups found for today."),
+                ephemeral=True
+            )
+            return
+
+        lines = []
+        for g in all_groups:
+            gid = g["group_id"]
+            res_count = g.get("reserved_slots", 0)
+            res_teams = g.get("reserved_teams", {})
+            filled_lines = []
+            for s in range(1, res_count + 1):
+                tname = res_teams.get(str(s), "🔴 *Empty*")
+                filled_lines.append(f"  └ Slot {s:02d}: **{tname}**")
+            
+            lines.append(f"**✦ Group {gid}** ({res_count} reserved slots)")
+            if filled_lines:
+                lines.extend(filled_lines)
+            else:
+                lines.append("  └ *None*")
+
+        embed = make_embed(
+            "📋 Reserved Slots Status",
+            f"{Theme.SEP}\n\n" + "\n".join(lines) + f"\n\n{Theme.SEP}",
+            Theme.INFO
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
 

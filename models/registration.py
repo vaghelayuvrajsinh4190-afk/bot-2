@@ -9,7 +9,8 @@ from database import registrations
 
 
 def create_registration(owner_id: str, event_id: str, group_id: str,
-                        team_name: str, players: list, teammate_ids: list):
+                        team_name: str, players: list, teammate_ids: list,
+                        slot_number: int = None):
     """
     Insert a new registration.
     
@@ -20,6 +21,7 @@ def create_registration(owner_id: str, event_id: str, group_id: str,
         team_name: Team display name
         players: List of player in-game names
         teammate_ids: List of Discord user IDs of teammates
+        slot_number: The roster slot number assigned to this team
     """
     doc = {
         "owner_id": owner_id,
@@ -30,9 +32,15 @@ def create_registration(owner_id: str, event_id: str, group_id: str,
         "teammate_ids": teammate_ids,
         "status": "registered",  # registered | cancelled | no_show
         "ss_submitted": False,
+        "dm_reminder": False,
+        "slot_number": slot_number,
         "registered_at": datetime.datetime.utcnow().isoformat()
     }
-    registrations.insert_one(doc)
+    result = registrations.update_one(
+        {"owner_id": owner_id, "event_id": event_id},
+        {"$setOnInsert": doc},
+        upsert=True
+    )
     return doc
 
 
@@ -73,7 +81,7 @@ def cancel_registration(owner_id: str, event_id: str):
     return result
 
 
-def move_registration(owner_id: str, event_id: str, new_group_id: str):
+def move_registration(owner_id: str, event_id: str, new_group_id: str, new_slot_number: int = None):
     """
     Move a registration to a different group.
     Returns the old group_id or None if not found.
@@ -87,12 +95,16 @@ def move_registration(owner_id: str, event_id: str, new_group_id: str):
         return None
 
     old_group_id = doc["group_id"]
+    update_fields = {
+        "group_id": new_group_id,
+        "moved_at": datetime.datetime.utcnow().isoformat()
+    }
+    if new_slot_number is not None:
+        update_fields["slot_number"] = new_slot_number
+
     registrations.update_one(
         {"_id": doc["_id"]},
-        {"$set": {
-            "group_id": new_group_id,
-            "moved_at": datetime.datetime.utcnow().isoformat()
-        }}
+        {"$set": update_fields}
     )
     return old_group_id
 

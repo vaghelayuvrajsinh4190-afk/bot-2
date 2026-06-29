@@ -10,7 +10,8 @@ from database import groups
 
 def create_group(event_id: str, group_id: str, capacity: int,
                  match1: dict, match2: dict,
-                 channel_id: int, role_id: int, category_id: int):
+                 channel_id: int, role_id: int, category_id: int,
+                 reserved_slots: int = 0):
     """
     Insert a new group document.
 
@@ -23,12 +24,15 @@ def create_group(event_id: str, group_id: str, capacity: int,
         channel_id: Discord channel ID for this group
         role_id: Discord role ID for this group
         category_id: Discord category ID this group belongs to
+        reserved_slots: Number of reserved slots (default 0, set by provisioning)
     """
     doc = {
         "event_id": event_id,
         "group_id": group_id,
         "capacity": capacity,
-        "current_count": 0,
+        "current_count": reserved_slots,  # Start after reserved slots
+        "reserved_slots": reserved_slots,
+        "reserved_teams": {},  # {"1": "GODCORE ESPORTS", "2": "Team X"}
         "match1": match1,
         "match2": match2,
         "channel_id": channel_id,
@@ -176,4 +180,99 @@ def update_match_details(event_id: str, group_id: str, match_num: int, details: 
     groups.update_one(
         {"event_id": event_id, "group_id": group_id},
         {"$set": update}
+    )
+
+
+# ═══════════════════ RESERVED SLOTS ═══════════════════
+
+def set_reserved_slots(event_id: str, group_id: str, count: int):
+    """
+    Update the reserved slot count for a specific group.
+    Also adjusts current_count to reflect the new reservation level.
+    """
+    group = groups.find_one({"event_id": event_id, "group_id": group_id})
+    if not group:
+        return None
+
+    old_reserved = group.get("reserved_slots", 0)
+    public_teams = group.get("current_count", 0) - old_reserved
+    new_count = count + max(public_teams, 0)
+
+    # Trim reserved_teams entries beyond the new count
+    reserved_teams = group.get("reserved_teams", {})
+    trimmed = {k: v for k, v in reserved_teams.items() if int(k) <= count}
+
+    return groups.find_one_and_update(
+        {"event_id": event_id, "group_id": group_id},
+        {"$set": {
+            "reserved_slots": count,
+            "current_count": new_count,
+            "reserved_teams": trimmed
+        }},
+        return_document=ReturnDocument.AFTER
+    )
+
+
+def set_all_reserved_slots(event_id: str, count: int):
+    """
+    Update reserved slot count for ALL non-archived groups in an event.
+    Returns the number of groups updated.
+    """
+    all_groups = list(groups.find({
+        "event_id": event_id,
+        "archived": {"$ne": True}
+    }))
+
+    updated = 0
+    for group in all_groups:
+        old_reserved = group.get("reserved_slots", 0)
+        public_teams = group.get("current_count", 0) - old_reserved
+        new_count = count + max(public_teams, 0)
+
+        reserved_teams = group.get("reserved_teams", {})
+        trimmed = {k: v for k, v in reserved_teams.items() if int(k) <= count}
+
+        groups.update_one(
+            {"_id": group["_id"]},
+            {"$set": {
+                "reserved_slots": count,
+                "current_count": new_count,
+                "reserved_teams": trimmed
+            }}
+        )
+        updated += 1
+
+    return updated
+
+
+def fill_reserved_slot(event_id: str, group_id: str, slot_number: int, team_name: str):
+    """
+    Fill a reserved slot with a team name.
+    slot_number is 1-indexed (e.g., 1, 2, 3).
+    Returns the updated group doc, or None if invalid.
+    """
+    group = groups.find_one({"event_id": event_id, "group_id": group_id})
+    if not group:
+        return None
+
+    reserved = group.get("reserved_slots", 0)
+    if slot_number < 1 or slot_number > reserved:
+        return None
+
+    return groups.find_one_and_update(
+        {"event_id": event_id, "group_id": group_id},
+        {"$set": {f"reserved_teams.{slot_number}": team_name}},
+        return_document=ReturnDocument.AFTER
+    )
+
+
+def clear_reserved_slot(event_id: str, group_id: str, slot_number: int):
+    """
+    Clear a filled reserved slot back to RESERVED status.
+    Returns the updated group doc, or None if invalid.
+    """
+    return groups.find_one_and_update(
+        {"event_id": event_id, "group_id": group_id},
+        {"$unset": {f"reserved_teams.{slot_number}": ""}},
+        return_document=ReturnDocument.AFTER
     )
