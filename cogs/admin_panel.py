@@ -852,31 +852,408 @@ class AdminPanelCog(commands.Cog):
     @app_commands.command(name="viewconfig", description="[Admin] View all bot configuration")
     @app_commands.checks.has_permissions(administrator=True)
     async def view_config(self, interaction: discord.Interaction):
-        from database import bot_config as config_collection
+        await interaction.response.defer(ephemeral=True)
+
+        event_id = get_today_event_id()
+        guild = interaction.guild
+        bot = interaction.client
+
+        # Retrieve MongoDB client and config collection
+        from database import bot_config as config_collection, _client
         all_configs = list(config_collection.find({}))
+        db_configs = {cfg.get("key"): cfg.get("value") for cfg in all_configs}
 
-        if not all_configs:
-            await interaction.response.send_message(
-                embed=make_embed("📋 No Configuration", "No settings configured yet.\nUse `/config` to get started.", Theme.WARNING),
-                ephemeral=True
-            )
-            return
-
-        lines = []
-        for cfg in all_configs:
-            key = cfg.get("key", "?")
-            val = cfg.get("value", "?")
-            if isinstance(val, int) and val > 1000000000:
-                lines.append(f"  ◆ **{key}:** <#{val}> (`{val}`)")
-            else:
-                lines.append(f"  ◆ **{key}:** `{val}`")
-
-        embed = make_embed(
-            "📋 Bot Configuration",
-            f"{Theme.SEP}\n\n" + "\n".join(lines) + f"\n\n{Theme.SEP}",
-            Theme.PREMIUM
+        # Load values directly from config files, db, or runtime settings
+        import config
+        from config import (
+            DEFAULT_GROUP_CAPACITY, DEFAULT_GROUP_COUNT, DEFAULT_RESERVED_SLOTS,
+            DEFAULT_CATEGORY_NAME, TIMEZONE_OFFSET, REGISTRATION_OPEN_HOUR, REGISTRATION_OPEN_MINUTE,
+            DEFAULT_LOCK_MINUTES, DEFAULT_REMINDER_LEAD_MINUTES, load_schedule
         )
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        from cogs.registration import is_registration_open
+
+        # Local helper to safely add a split field (protects against >1024 char limits)
+        def add_split_field(embed, name, value, inline=False):
+            if len(value) <= 1000:
+                embed.add_field(name=name, value=value, inline=inline)
+                return
+            lines = value.split("\n")
+            current_chunk = []
+            chunk_idx = 1
+            for line in lines:
+                if len("\n".join(current_chunk) + "\n" + line) > 1000:
+                    embed.add_field(
+                        name=f"{name} (Part {chunk_idx})" if chunk_idx > 1 or len(lines) > 1 else name,
+                        value="\n".join(current_chunk),
+                        inline=inline
+                    )
+                    current_chunk = [line]
+                    chunk_idx += 1
+                else:
+                    current_chunk.append(line)
+            if current_chunk:
+                embed.add_field(
+                    name=f"{name} (Part {chunk_idx})" if chunk_idx > 1 else name,
+                    value="\n".join(current_chunk),
+                    inline=inline
+                )
+
+        embeds = []
+
+        # 1. 🏆 Event Information
+        event_name = db_configs.get("event_name") or db_configs.get("default_category_name") or DEFAULT_CATEGORY_NAME
+        event_mode = db_configs.get("event_mode", "Esports Scrims / Qualifiers")
+        
+        is_open, open_h, open_m, current_t = await is_registration_open()
+        reg_status = "🟢 Open / Accepting Registrations" if is_open else "🔴 Closed / Locked"
+        
+        # 12-hour format for open time
+        ampm = "PM" if open_h >= 12 else "AM"
+        display_h = open_h if 0 < open_h <= 12 else (open_h - 12 if open_h > 12 else 12)
+        open_time_str = f"{display_h:02d}:{open_m:02d} {ampm} IST"
+        
+        lock_minutes = db_configs.get("lock_minutes", DEFAULT_LOCK_MINUTES)
+        close_time_desc = f"Auto-Locks {lock_minutes} minutes before each group match start"
+        timezone_desc = f"IST (UTC+{TIMEZONE_OFFSET})"
+        
+        emb1 = make_embed(title="🏆 Event Information", color=Theme.TEAL)
+        emb1.description = (
+            f"◆ **Event Name:** `{event_name}`\n"
+            f"◆ **Event Mode:** `{event_mode}`\n"
+            f"◆ **Registration Status:** {reg_status}\n"
+            f"◆ **Registration Open Time:** `{open_time_str}`\n"
+            f"◆ **Registration Close Time:** `{close_time_desc}`\n"
+            f"◆ **Event Time Zone:** `{timezone_desc}`"
+        )
+        embeds.append(emb1)
+
+        # 2. 👥 Registration Details
+        all_groups = group_model.get_all_groups(event_id)
+        default_capacity = db_configs.get("default_group_capacity", DEFAULT_GROUP_CAPACITY)
+        default_reserved = db_configs.get("default_reserved_slots", DEFAULT_RESERVED_SLOTS)
+        
+        total_registered = reg_model.count_registrations(event_id)
+        total_capacity = sum(g.get("capacity", default_capacity) for g in all_groups)
+        
+        if len(all_groups) == 0:
+            fallback_groups_count = db_configs.get("default_group_count", DEFAULT_GROUP_COUNT)
+            total_capacity = fallback_groups_count * default_capacity
+            remaining_slots = total_capacity
+        else:
+            remaining_slots = max(0, total_capacity - total_registered)
+            
+        waiting_list_status = db_configs.get("waiting_list_status", "Disabled")
+        
+        is_locked_all = all(g.get("locked") for g in all_groups) if all_groups else not is_open
+        lock_status = "🔒 Locked" if is_locked_all else "🔓 Unlocked"
+        
+        emb2 = make_embed(title="👥 Registration Summary", color=Theme.INFO)
+        emb2.description = (
+            f"◆ **Capacity Per Group:** `{default_capacity}`\n"
+            f"◆ **Reserved Slots:** `{default_reserved}`\n"
+            f"◆ **Total Registered Teams:** `{total_registered}`\n"
+            f"◆ **Remaining Slots:** `{remaining_slots}`\n"
+            f"◆ **Total Capacity:** `{total_capacity}`\n"
+            f"◆ **Waiting List Status:** `{waiting_list_status}`\n"
+            f"◆ **Registration Lock Status:** `{lock_status}`"
+        )
+        embeds.append(emb2)
+
+        # 3. 📂 Group Information
+        provisioning_cog = bot.get_cog("ProvisioningCog")
+        auto_generation = "Enabled" if provisioning_cog and provisioning_cog.autopilot_loop.is_running() else "Disabled"
+        
+        total_groups = len(all_groups)
+        active_groups = sum(1 for g in all_groups if not g.get("archived"))
+        empty_groups = sum(1 for g in all_groups if g.get("current_count", 0) == g.get("reserved_slots", 0))
+        full_groups = sum(1 for g in all_groups if g.get("current_count", 0) >= g.get("capacity", default_capacity))
+        
+        group_naming_pattern = db_configs.get("group_naming_pattern", "G{index:04d}")
+        try:
+            next_group_id = group_naming_pattern.format(index=total_groups + 1)
+        except Exception:
+            next_group_id = f"G{total_groups + 1:04d}"
+            
+        emb3 = make_embed(title="📂 Group Configuration", color=Theme.GOLD)
+        emb3.description = (
+            f"◆ **Auto Group Generation:** `{auto_generation}`\n"
+            f"◆ **Total Groups Generated:** `{total_groups}`\n"
+            f"◆ **Active Groups:** `{active_groups}`\n"
+            f"◆ **Empty Groups:** `{empty_groups}`\n"
+            f"◆ **Full Groups:** `{full_groups}`\n"
+            f"◆ **Capacity Per Group:** `{default_capacity}`\n"
+            f"◆ **Group Naming Pattern:** `{group_naming_pattern}`\n"
+            f"◆ **Next Group ID:** `{next_group_id}`"
+        )
+        embeds.append(emb3)
+
+        # 4. 📂 Generated Groups List
+        group_lines = []
+        for g in all_groups:
+            gid = g.get("group_id")
+            count = g.get("current_count", 0)
+            cap = g.get("capacity", default_capacity)
+            group_lines.append(f"◆ **{gid}** • {count}/{cap}")
+            
+        if not group_lines:
+            group_lines.append("*No groups currently generated for today.*")
+            
+        groups_chunk_size = 20
+        for idx in range(0, len(group_lines), groups_chunk_size):
+            chunk = group_lines[idx:idx + groups_chunk_size]
+            emb_groups = make_embed(
+                title=f"📂 Generated Groups" if len(group_lines) <= groups_chunk_size else f"📂 Generated Groups (Page {idx//groups_chunk_size + 1})",
+                desc="\n".join(chunk),
+                color=Theme.INFO
+            )
+            embeds.append(emb_groups)
+
+        # 5. 🗺 Match Configuration
+        m1_maps = set()
+        m1_times = set()
+        m2_maps = set()
+        m2_times = set()
+        
+        for g in all_groups:
+            m1 = g.get("match1", {})
+            m2 = g.get("match2", {})
+            if m1.get("map") and m1.get("map") != "TBD":
+                m1_maps.add(m1.get("map"))
+            if m1.get("start") and m1.get("start") != "TBD":
+                m1_times.add(m1.get("start"))
+            if m2.get("map") and m2.get("map") != "TBD":
+                m2_maps.add(m2.get("map"))
+            if m2.get("start") and m2.get("start") != "TBD":
+                m2_times.add(m2.get("start"))
+                
+        if not m1_maps or not m2_maps:
+            schedule = load_schedule()
+            for s in schedule:
+                m1 = s.get("match1", {})
+                m2 = s.get("match2", {})
+                if m1.get("map") and m1.get("map") != "TBD":
+                    m1_maps.add(m1.get("map"))
+                if m1.get("start") and m1.get("start") != "TBD":
+                    m1_times.add(m1.get("start"))
+                if m2.get("map") and m2.get("map") != "TBD":
+                    m2_maps.add(m2.get("map"))
+                if m2.get("start") and m2.get("start") != "TBD":
+                    m2_times.add(m2.get("start"))
+                    
+        m1_map_str = ", ".join(sorted(m1_maps)) if m1_maps else "TBD"
+        m2_map_str = ", ".join(sorted(m2_maps)) if m2_maps else "TBD"
+        
+        def format_time_range(times_set):
+            if not times_set:
+                return "TBD"
+            times_list = sorted(list(times_set))
+            if len(times_list) == 1:
+                return times_list[0]
+            return f"{times_list[0]} - {times_list[-1]} (Varies)"
+            
+        m1_time_str = format_time_range(m1_times)
+        m2_time_str = format_time_range(m2_times)
+        
+        match_format = db_configs.get("match_format", "Squad TPP")
+        match_count = db_configs.get("match_count", 2)
+        
+        emb_match = make_embed(title="🗺 Match Configuration", color=Theme.ORANGE)
+        emb_match.description = (
+            f"◆ **Match 1 Map:** `{m1_map_str}`\n"
+            f"◆ **Match 1 Time:** `{m1_time_str}`\n"
+            f"◆ **Match 2 Map:** `{m2_map_str}`\n"
+            f"◆ **Match 2 Time:** `{m2_time_str}`\n"
+            f"◆ **Match Format:** `{match_format}`\n"
+            f"◆ **Match Count:** `{match_count}`"
+        )
+        embeds.append(emb_match)
+
+        # 6. 📢 Discord Configuration
+        reg_channel_id = get_channel_config("register")
+        announcement_channel_id = db_configs.get("channel_announcement") or db_configs.get("channel_announcements")
+        if not announcement_channel_id:
+            ann_ch = discord.utils.get(guild.text_channels, name="announcements") or discord.utils.get(guild.text_channels, name="announcement")
+            if ann_ch:
+                announcement_channel_id = ann_ch.id
+                
+        result_channel_id = get_channel_config("leaderboard")
+        admin_channel_id = get_channel_config("admin")
+        
+        reg_ch_mention = f"<#{reg_channel_id}> (`{reg_channel_id}`)" if reg_channel_id else "`Not set`"
+        ann_ch_mention = f"<#{announcement_channel_id}> (`{announcement_channel_id}`)" if announcement_channel_id else "`Not set`"
+        res_ch_mention = f"<#{result_channel_id}> (`{result_channel_id}`)" if result_channel_id else "`Not set`"
+        admin_ch_mention = f"<#{admin_channel_id}> (`{admin_channel_id}`)" if admin_channel_id else "`Not set`"
+        
+        # Category IDs
+        category_set = set()
+        for k, v in db_configs.items():
+            if k.startswith("category_") and isinstance(v, int):
+                category_set.add(v)
+        for g in all_groups:
+            cat_id = g.get("category_id")
+            if cat_id:
+                category_set.add(cat_id)
+                
+        category_ids_str = ", ".join(f"<#{cid}> (`{cid}`)" for cid in sorted(category_set)) if category_set else "None"
+        
+        # Role IDs
+        role_mentions = []
+        role_set = set()
+        for g in all_groups:
+            rid = g.get("role_id")
+            gid = g.get("group_id")
+            if rid:
+                role_mentions.append(f"Group {gid}: <@&{rid}> (`{rid}`)")
+                role_set.add(rid)
+        for k, v in db_configs.items():
+            if (k.endswith("_role") or k.startswith("role_")) and isinstance(v, int) and v not in role_set:
+                role_mentions.append(f"**{k}:** <@&{v}> (`{v}`)")
+                role_set.add(v)
+                
+        role_mentions_str = "\n".join(role_mentions) if role_mentions else "No active roles configured."
+        
+        emb_discord = make_embed(title="📢 Discord Configuration", color=Theme.PREMIUM)
+        emb_discord.description = (
+            f"◆ **Registration Channel:** {reg_ch_mention}\n"
+            f"◆ **Announcement Channel:** {ann_ch_mention}\n"
+            f"◆ **Result Channel:** {res_ch_mention}\n"
+            f"◆ **Admin Channel:** {admin_ch_mention}\n"
+            f"◆ **Category IDs:** {category_ids_str}"
+        )
+        
+        add_split_field(emb_discord, "Role IDs", role_mentions_str, inline=False)
+        embeds.append(emb_discord)
+
+        # 7. ⚙️ Bot Configuration
+        try:
+            _client.admin.command("ping")
+            db_status = "🟢 Connected"
+        except Exception:
+            db_status = "🔴 Disconnected / Error"
+            
+        from config import MONGO_URI
+        masked_mongo_uri = "`Hidden / Masked`"
+        if MONGO_URI:
+            import re
+            masked_mongo_uri = re.sub(r'mongodb(\+srv)?://([^:]+):([^@]+)@', r'mongodb\1://***:***@', MONGO_URI)
+            
+        bot_status = "🟢 Online"
+        bot_latency = f"{bot.latency * 1000:.0f} ms"
+        bot_version = db_configs.get("version", "2.0.0 (Esports Edition)")
+        bot_prefix = db_configs.get("prefix", "!")
+        total_slash_commands = len(bot.tree.get_commands())
+        
+        reminders_cog = bot.get_cog("RemindersCog")
+        scheduler_status = "Active" if reminders_cog and reminders_cog.reminder_loop.is_running() else "Inactive"
+        
+        emb_bot = make_embed(title="⚙️ Bot Configuration", color=Theme.DARK)
+        emb_bot.description = (
+            f"◆ **Database Status:** {db_status}\n"
+            f"◆ **MongoDB Connection:** `{masked_mongo_uri}`\n"
+            f"◆ **Bot Status:** {bot_status} (Latency: `{bot_latency}`)\n"
+            f"◆ **Version:** `{bot_version}`\n"
+            f"◆ **Prefix:** `{bot_prefix}`\n"
+            f"◆ **Slash Commands:** `{total_slash_commands}` synced\n"
+            f"◆ **Scheduler Status:** `{scheduler_status}`"
+        )
+        embeds.append(emb_bot)
+
+        # 8. Miscellaneous Configs (Dynamically fetch all other config values in DB and config.py)
+        displayed_db_keys = {
+            "event_name", "event_mode", "default_group_capacity", "default_reserved_slots",
+            "waiting_list_status", "default_group_count", "group_naming_pattern",
+            "match_format", "match_count", "channel_register", "channel_admin",
+            "channel_admin_log", "channel_leaderboard", "channel_registered_teams",
+            "version", "prefix", "schedule", "registration_open_hour", "registration_open_minute",
+            "lock_minutes", "reminder_lead_minutes", "token", "mongo_uri"
+        }
+        for k in db_configs.keys():
+            if k.startswith("category_") or k.startswith("channel_") or k.startswith("role_"):
+                displayed_db_keys.add(k)
+                
+        import inspect
+        config_configs = {}
+        for name, val in inspect.getmembers(config):
+            if name.isupper() and not inspect.ismodule(val) and not inspect.isroutine(val):
+                if name in ("TOKEN", "MONGO_URI"):
+                    continue
+                displayed_config_names = {
+                    "DEFAULT_GROUP_CAPACITY", "DEFAULT_GROUP_COUNT", "DEFAULT_RESERVED_SLOTS",
+                    "DEFAULT_REMINDER_LEAD_MINUTES", "DEFAULT_LOCK_MINUTES", "REGISTRATION_OPEN_HOUR",
+                    "REGISTRATION_OPEN_MINUTE", "DEFAULT_CATEGORY_NAME", "BOT_PREFIX", "TIMEZONE_OFFSET"
+                }
+                if name not in displayed_config_names:
+                    config_configs[name] = val
+                    
+        other_configs = []
+        for k, v in db_configs.items():
+            if k not in displayed_db_keys:
+                if k == "position_points":
+                    if isinstance(v, dict):
+                        pts_summary = ", ".join(f"#{rank}: {pts}pt" for rank, pts in sorted(v.items(), key=lambda x: int(x[0])) if pts > 0)
+                        other_configs.append(f"  ◆ **position_points:** `{pts_summary or 'No points configured'}`")
+                    else:
+                        other_configs.append(f"  ◆ **position_points:** `{v}`")
+                elif k == "registration_open_subscribers":
+                    sub_count = len(v) if isinstance(v, list) else 0
+                    other_configs.append(f"  ◆ **notify_subscribers:** `{sub_count} users`")
+                elif k in ("token", "mongo_uri"):
+                    other_configs.append(f"  ◆ **{k}:** `*Hidden*`")
+                else:
+                    other_configs.append(f"  ◆ **{k}:** `{v}`")
+                    
+        for k, v in config_configs.items():
+            if k.lower() in db_configs or k in db_configs:
+                continue
+            if k == "DEFAULT_POSITION_POINTS":
+                if isinstance(v, dict):
+                    pts_summary = ", ".join(f"#{rank}: {pts}pt" for rank, pts in sorted(v.items(), key=lambda x: int(x[0])) if pts > 0)
+                    other_configs.append(f"  ◆ **DEFAULT_POSITION_POINTS:** `{pts_summary}`")
+                else:
+                    other_configs.append(f"  ◆ **DEFAULT_POSITION_POINTS:** `{v}`")
+            elif k == "RANK_EMOJIS":
+                other_configs.append(f"  ◆ **RANK_EMOJIS:** `{len(v)} emojis`")
+            else:
+                other_configs.append(f"  ◆ **{k}:** `{v}`")
+                
+        # Split other_configs across multiple embeds if description grows too long
+        if other_configs:
+            other_chunk = []
+            char_count = 0
+            other_page = 1
+            
+            for line in other_configs:
+                if char_count + len(line) + 1 > 3800:
+                    emb_other = make_embed(
+                        title=f"⚙️ Miscellaneous Configs (Page {other_page})",
+                        desc="\n".join(other_chunk),
+                        color=Theme.ORANGE
+                    )
+                    embeds.append(emb_other)
+                    other_chunk = [line]
+                    char_count = len(line)
+                    other_page += 1
+                else:
+                    other_chunk.append(line)
+                    char_count += len(line) + 1
+                    
+            if other_chunk:
+                emb_other = make_embed(
+                    title=f"⚙️ Miscellaneous Configs (Page {other_page})" if other_page > 1 else "⚙️ Miscellaneous Configs",
+                    desc="\n".join(other_chunk),
+                    color=Theme.ORANGE
+                )
+                embeds.append(emb_other)
+
+        # Format footer for page indexing on all embeds and send
+        total_embeds = len(embeds)
+        for idx, emb in enumerate(embeds):
+            emb.set_footer(text=f"Embed {idx+1}/{total_embeds} │ Mack Bot Configuration Overview")
+
+        # Send embeds in chunks of 10
+        for i in range(0, len(embeds), 10):
+            chunk = embeds[i:i + 10]
+            await interaction.followup.send(embeds=chunk, ephemeral=True)
 
     # ─────────────── UNBAN COMMAND ───────────────
 
