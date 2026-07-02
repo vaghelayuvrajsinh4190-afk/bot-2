@@ -22,6 +22,7 @@ from utils.embeds import (
 )
 from models import team_profile, group as group_model, registration as reg_model, punishment
 from database import get_config, set_config
+from utils.updater import update_group_roster, update_registration_board
 
 # In-memory cache for multi-step registrations to bridge Step 1 and Step 2
 registration_cache = {}
@@ -443,10 +444,10 @@ class ConfirmRegistrationView(ui.View):
         await interaction.followup.send(embed=success, ephemeral=True)
 
         # Refresh the roster in the group channel
-        await self._refresh_group_roster(interaction.guild, assigned_group, event_id)
+        await update_group_roster(interaction.guild, event_id, group_id)
 
         # Refresh the slot availability embed in register channel
-        await self._refresh_slot_availability(interaction.guild, event_id)
+        await update_registration_board(interaction.guild, event_id)
 
         # Post public receipt to #registered-teams log channel
         await self._post_public_receipt(
@@ -454,69 +455,6 @@ class ConfirmRegistrationView(ui.View):
             self.players, self.player_uids, self.player_igns,
             self.selected_members, event_date_display
         )
-
-    async def _refresh_group_roster(self, guild, group_doc, event_id):
-        """Update the live roster embed in the group channel."""
-        channel_id = group_doc.get("channel_id")
-        if not channel_id:
-            return
-
-        channel = guild.get_channel(channel_id)
-        if not channel:
-            return
-
-        # Fetch group registrations asynchronously
-        regs = await asyncio.to_thread(reg_model.get_group_registrations, group_doc["group_id"], event_id)
-        embed = build_roster_embed(group_doc, regs, group_doc["capacity"])
-
-        msg_id = group_doc.get("roster_message_id")
-        message = None
-        if msg_id:
-            try:
-                message = await channel.fetch_message(msg_id)
-                await message.edit(embed=embed)
-            except discord.NotFound:
-                message = None
-
-        if message is None:
-            message = await channel.send(embed=embed)
-            await asyncio.to_thread(group_model.update_roster_message, event_id, group_doc["group_id"], message.id)
-
-    async def _refresh_slot_availability(self, guild, event_id):
-        """Update the slot availability embed in the register channel."""
-        from database import get_channel_config, get_config, set_config
-
-        reg_channel_id = await asyncio.to_thread(get_channel_config, "register")
-        if not reg_channel_id:
-            return
-
-        channel = guild.get_channel(reg_channel_id)
-        if not channel:
-            return
-
-        # Fetch groups asynchronously
-        all_groups = await asyncio.to_thread(group_model.get_all_groups, event_id)
-        embed = build_registration_board_embed(all_groups)
-
-        # Try to find and edit the existing permanent board message asynchronously
-        slot_msg_id = await asyncio.to_thread(get_config, "slot_message_id")
-        if slot_msg_id:
-            try:
-                msg = await channel.fetch_message(slot_msg_id)
-                await msg.edit(embed=embed)
-                return
-            except discord.NotFound:
-                pass
-
-        # Fallback: update event-specific message asynchronously
-        avail_msg_id = await asyncio.to_thread(get_config, f"slot_availability_msg_{event_id}")
-        if avail_msg_id:
-            try:
-                msg = await channel.fetch_message(avail_msg_id)
-                await msg.edit(embed=embed)
-                return
-            except discord.NotFound:
-                pass
 
     async def _post_public_receipt(self, guild, team_name, group_id, players,
                                     player_uids, player_igns, members, date_display):

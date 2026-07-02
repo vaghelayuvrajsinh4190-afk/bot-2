@@ -18,6 +18,7 @@ from utils.embeds import make_embed, error_embed, success_embed, build_roster_em
 from utils.permissions import grant_group_access, revoke_group_access
 from models import group as group_model, registration as reg_model, punishment
 from database import get_config, set_config, get_channel_config, set_channel_config
+from utils.updater import update_group_roster, update_registration_board
 
 
 # ═══════════════════ HELPERS ═══════════════════
@@ -156,6 +157,12 @@ class MoveTeamModal(ui.Modal, title="🔀 Move Team"):
                     except: pass
 
         team_name = reg.get("team_name", "???")
+
+        # Refresh rosters and board
+        await update_group_roster(guild, event_id, old_gid)
+        await update_group_roster(guild, event_id, new_gid)
+        await update_registration_board(guild, event_id)
+
         await interaction.followup.send(
             embed=success_embed(
                 "✅ Team Moved",
@@ -531,23 +538,9 @@ class TeamManageSubView(ui.View):
                 if member and role:
                     await revoke_group_access(member, role)
 
-        # Refresh roster
-        updated_group = group_model.get_group(event_id, self.group_id)
-        if updated_group:
-            regs = reg_model.get_group_registrations(self.group_id, event_id)
-            embed = build_roster_embed(updated_group, regs, updated_group["capacity"])
-            ch = guild.get_channel(updated_group.get("channel_id"))
-            if ch:
-                msg_id = updated_group.get("roster_message_id")
-                if msg_id:
-                    try:
-                        msg = await ch.fetch_message(msg_id)
-                        await msg.edit(embed=embed)
-                    except discord.NotFound:
-                        pass
-
-        # Refresh registration board (-1)
-        await self._refresh_board(guild, event_id)
+        # Refresh roster and board
+        await update_group_roster(interaction.guild, event_id, self.group_id)
+        await update_registration_board(interaction.guild, event_id)
 
         team_name = cancelled.get("team_name", "your team")
         await interaction.followup.send(
@@ -697,21 +690,10 @@ class ChangeGroupSelectDropdown(ui.Select):
                 if new_role:
                     await grant_group_access(member, new_role)
 
-        # Refresh both rosters
-        for gid in [self.current_group_id, new_group_id]:
-            g_doc = group_model.get_group(event_id, gid)
-            if g_doc:
-                regs = reg_model.get_group_registrations(gid, event_id)
-                embed = build_roster_embed(g_doc, regs, g_doc["capacity"])
-                ch = guild.get_channel(g_doc.get("channel_id"))
-                if ch:
-                    msg_id = g_doc.get("roster_message_id")
-                    if msg_id:
-                        try:
-                            msg = await ch.fetch_message(msg_id)
-                            await msg.edit(embed=embed)
-                        except discord.NotFound:
-                            pass
+        # Refresh both rosters and board
+        await update_group_roster(interaction.guild, event_id, self.current_group_id)
+        await update_group_roster(interaction.guild, event_id, new_group_id)
+        await update_registration_board(interaction.guild, event_id)
 
         await interaction.followup.send(
             embed=success_embed(
@@ -999,23 +981,10 @@ class AdminPanelCog(commands.Cog):
         guild = interaction.guild
         all_groups = await asyncio.to_thread(group_model.get_all_groups, event_id)
         for g in all_groups:
-            # Refresh roster in the group channel
-            ch = guild.get_channel(g.get("channel_id"))
-            if ch:
-                regs = await asyncio.to_thread(reg_model.get_group_registrations, g["group_id"], event_id)
-                embed = build_roster_embed(g, regs, g["capacity"])
-                msg_id = g.get("roster_message_id")
-                if msg_id:
-                    try:
-                        msg = await ch.fetch_message(msg_id)
-                        await msg.edit(embed=embed)
-                    except discord.NotFound:
-                        pass
+            await update_group_roster(guild, event_id, g["group_id"])
 
         # Update slot availability board
-        cog = interaction.client.get_cog("ProvisioningCog")
-        if cog:
-            await cog._refresh_availability(guild, event_id)
+        await update_registration_board(guild, event_id)
 
         await interaction.followup.send(
             embed=success_embed(
@@ -1062,19 +1031,9 @@ class AdminPanelCog(commands.Cog):
             )
             return
 
-        # Refresh roster in the group channel
-        guild = interaction.guild
-        ch = guild.get_channel(updated_group.get("channel_id"))
-        if ch:
-            regs = await asyncio.to_thread(reg_model.get_group_registrations, group_id, event_id)
-            embed = build_roster_embed(updated_group, regs, updated_group["capacity"])
-            msg_id = updated_group.get("roster_message_id")
-            if msg_id:
-                try:
-                    msg = await ch.fetch_message(msg_id)
-                    await msg.edit(embed=embed)
-                except discord.NotFound:
-                    pass
+        # Refresh roster in the group channel and board
+        await update_group_roster(interaction.guild, event_id, group_id)
+        await update_registration_board(interaction.guild, event_id)
 
         await interaction.followup.send(
             embed=success_embed(
@@ -1119,19 +1078,9 @@ class AdminPanelCog(commands.Cog):
             )
             return
 
-        # Refresh roster in the group channel
-        guild = interaction.guild
-        ch = guild.get_channel(updated_group.get("channel_id"))
-        if ch:
-            regs = await asyncio.to_thread(reg_model.get_group_registrations, group_id, event_id)
-            embed = build_roster_embed(updated_group, regs, updated_group["capacity"])
-            msg_id = updated_group.get("roster_message_id")
-            if msg_id:
-                try:
-                    msg = await ch.fetch_message(msg_id)
-                    await msg.edit(embed=embed)
-                except discord.NotFound:
-                    pass
+        # Refresh roster in the group channel and board
+        await update_group_roster(interaction.guild, event_id, group_id)
+        await update_registration_board(interaction.guild, event_id)
 
         await interaction.followup.send(
             embed=success_embed(

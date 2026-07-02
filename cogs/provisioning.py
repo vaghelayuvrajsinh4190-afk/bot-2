@@ -32,9 +32,10 @@ from utils.permissions import (
     get_or_create_role, create_group_channel,
     create_day_category, cleanup_channel, cleanup_role, cleanup_category
 )
-from models import group as group_model, punishment
-from models import team_profile
-from database import get_config, set_config, get_channel_config
+from models import group as group_model, registration as reg_model, team_profile
+from database import get_config, set_config, get_channel_config, set_channel_config
+from utils.permissions import grant_group_access
+from utils.updater import update_registration_board
 
 
 # ═══════════════════ HELPERS ═══════════════════
@@ -997,34 +998,7 @@ class ProvisioningCog(commands.Cog):
 
     async def _refresh_availability(self, guild, event_id):
         """Refresh the slot availability embed."""
-        reg_channel_id = await asyncio.to_thread(get_channel_config, "register")
-        if not reg_channel_id:
-            return
-
-        channel = guild.get_channel(reg_channel_id)
-        if not channel:
-            return
-
-        all_groups = await asyncio.to_thread(group_model.get_all_groups, event_id)
-        embed = build_registration_board_embed(all_groups)
-
-        slot_msg_id = await asyncio.to_thread(get_config, "slot_message_id")
-        if slot_msg_id:
-            try:
-                msg = await channel.fetch_message(slot_msg_id)
-                await msg.edit(embed=embed)
-                return
-            except discord.NotFound:
-                pass
-
-        avail_msg_id = await asyncio.to_thread(get_config, f"slot_availability_msg_{event_id}")
-        if avail_msg_id:
-            try:
-                msg = await channel.fetch_message(avail_msg_id)
-                await msg.edit(embed=embed)
-                return
-            except discord.NotFound:
-                pass
+        await update_registration_board(guild, event_id)
 
 
 async def setup(bot):

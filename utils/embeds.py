@@ -108,22 +108,13 @@ def build_roster_embed(group_doc, registrations, capacity):
 
     embed = make_embed(
         f"🏆  {display_name}  ─  Live Roster",
-        f"```ansi\n\u001b[1;36m{'═' * 40}\u001b[0m\n```\n"
-        f"📡 **Status:** {status} │ **{count}/{capacity}** Slots Filled\n"
+        f"📡 **Status:** {status}\n"
+        f"📊 **Slots:** **{count}/{capacity}** Filled\n"
         f"▓ **Roster Fill:** {bar}\n\n"
-        f"╭── 🎮 **Match Schedule** ──────────╮\n"
-        f"│\n"
-        f"│  ⚔️ **Match 1**\n"
-        f"│  ⏱️ Start: `{m1_start}` │ IDP: `{m1_idp}`\n"
-        f"│  🗺️ Map: `{m1_map}`\n"
-        f"│\n"
-        f"│  ⚔️ **Match 2**\n"
-        f"│  ⏱️ Start: `{m2_start}` │ IDP: `{m2_idp}`\n"
-        f"│  🗺️ Map: `{m2_map}`\n"
-        f"│\n"
-        f"╰───────────────────────────────────╯",
+        f"> **Match 1:** `{m1_start}` ─ `{m1_map}`\n"
+        f"> **Match 2:** `{m2_start}` ─ `{m2_map}`",
         color=color,
-        footer="🔄 Auto-updates on every registration"
+        footer="🔄 Auto-updates │ SQ SCRIMS"
     )
 
     # Add roster columns
@@ -250,14 +241,10 @@ def build_registration_board_embed(groups=None, event_name="Daily Scrims"):
 
     embed = make_embed(
         f"🏟️ {event_name} — Registration Board",
-        f"```ansi\n"
-        f"\u001b[1;35m╔══════════════════════════════════════╗\u001b[0m\n"
-        f"\u001b[1;35m║\u001b[0m            \u001b[1;37m⚡ SYNDICATE ⚡\u001b[0m             \u001b[1;35m║\u001b[0m\n"
-        f"\u001b[1;35m╚══════════════════════════════════════╝\u001b[0m\n"
-        f"```\n"
+        f"## ⚡ SQ SCRIMS ⚡\n\n"
         f"📊 **Slots Claimed:** `{total_filled}/{total_capacity}` │ "
         f"**Remaining:** `{slots_remaining}`\n"
-        f"▓ **Overall:** {overall_bar}\n\n"
+        f"▓ **Overall Progress:**\n{overall_bar}\n\n"
         f"{Theme.THIN_SEP}\n\n"
         f"{groups_text}\n\n"
         f"{Theme.THIN_SEP}\n"
@@ -265,7 +252,7 @@ def build_registration_board_embed(groups=None, event_name="Daily Scrims"):
         f"*Registration is first-come, first-served.*\n\n"
         f"{Theme.SEP}",
         Theme.PREMIUM,
-        "🔄 Auto-updates on every registration │ Mack Bot 🚀"
+        "🔄 Auto-updates │ SQ SCRIMS"
     )
     return embed
 
@@ -365,26 +352,18 @@ def build_provision_summary_embed(event_id, created_count, capacity,
 
     embed = make_embed(
         "✅ Provisioning Complete!",
-        f"```ansi\n"
-        f"\u001b[1;32m{'═' * 40}\u001b[0m\n"
-        f"\u001b[1;37m  ⚡ GROUPS DEPLOYED SUCCESSFULLY ⚡\u001b[0m\n"
-        f"\u001b[1;32m{'═' * 40}\u001b[0m\n"
-        f"```\n"
-        f"╭── 📋 **Setup Summary** ──────────────╮\n"
-        f"│\n"
-        f"│  📅 **Event:** `{event_id}`\n"
-        f"│  📂 **Category:** `{category_name}`\n"
-        f"│  👥 **Groups:** `{created_count}`\n"
-        f"│  🏟️ **Capacity:** `{capacity}` per group\n"
-        f"│  🎮 **Total Slots:** `{total_slots}`\n"
-        f"│  📋 **Schedule:** Using `schedule.json`\n"
-        f"│\n"
-        f"╰──────────────────────────────────────╯\n\n"
+        f"## ⚡ GROUPS DEPLOYED SUCCESSFULLY ⚡\n\n"
+        f"> 📅 **Event:** `{event_id}`\n"
+        f"> 📂 **Category:** `{category_name}`\n"
+        f"> 👥 **Groups:** `{created_count}`\n"
+        f"> 🏟️ **Capacity:** `{capacity}` per group\n"
+        f"> 🎮 **Total Slots:** `{total_slots}`\n"
+        f"> 📋 **Schedule:** Using `schedule.json`\n\n"
         f"Created: **{created_count}** channels, "
         f"**{created_count}** roles, "
         f"**1** registration channel\n\n"
         f"{Theme.SEP}",
         Theme.SUCCESS,
-        f"Provisioned by {provisioned_by or 'Autopilot'}"
+        f"Provisioned by {provisioned_by or 'Autopilot'} │ SQ SCRIMS"
     )
     return embed

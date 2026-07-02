@@ -132,16 +132,16 @@ class Theme:
     ARROW     = "›"
 
     @staticmethod
-    def bar(current, maximum, length=12):
-        """Generate a progress bar string using parallelograms."""
+    def bar(current, maximum, length=10):
+        """Generate a progress bar string using solid blocks."""
         filled = int((current / maximum) * length) if maximum else 0
-        return "`" + "▰" * filled + "▱" * (length - filled) + "`"
+        return "`" + "█" * filled + "░" * (length - filled) + "`"
 
     @staticmethod
     def slot_bar(current, maximum, length=10):
-        """Generate a progress bar using circle style (blueprint style)."""
+        """Generate a progress bar using solid blocks."""
         filled = int((current / maximum) * length) if maximum else 0
-        return "●" * filled + "○" * (length - filled)
+        return "`" + "█" * filled + "░" * (length - filled) + "`"
 
     @staticmethod
     def group_color(count, mx):

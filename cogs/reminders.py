@@ -13,6 +13,7 @@ from discord import app_commands, ui
 from config import Theme, TIMEZONE_OFFSET, DEFAULT_REMINDER_LEAD_MINUTES, DEFAULT_LOCK_MINUTES
 from utils.embeds import make_embed, error_embed, success_embed, build_roster_embed
 from utils.permissions import grant_group_access, revoke_group_access
+from utils.updater import update_group_roster, update_registration_board
 from models import group as group_model, registration as reg_model
 from database import get_config, get_channel_config
 
@@ -127,21 +128,9 @@ class CancelSlotView(ui.View):
                 if member and role:
                     await revoke_group_access(member, role)
 
-        # Refresh roster
-        updated_group = await asyncio.to_thread(group_model.get_group, event_id, self.group_id)
-        if updated_group:
-            regs = await asyncio.to_thread(reg_model.get_group_registrations, self.group_id, event_id)
-            embed = build_roster_embed(updated_group, regs, updated_group["capacity"])
-            
-            ch = guild.get_channel(updated_group.get("channel_id"))
-            if ch:
-                msg_id = updated_group.get("roster_message_id")
-                if msg_id:
-                    try:
-                        msg = await ch.fetch_message(msg_id)
-                        await msg.edit(embed=embed)
-                    except discord.NotFound:
-                        pass
+        # Refresh roster and board
+        await update_group_roster(interaction.guild, event_id, self.group_id)
+        await update_registration_board(interaction.guild, event_id)
 
         team_name = cancelled.get("team_name", "your team")
         await interaction.followup.send(
@@ -280,21 +269,10 @@ class GroupSelectDropdown(ui.Select):
                 if new_role:
                     await grant_group_access(member, new_role)
 
-        # Refresh both rosters
-        for gid in [self.current_group_id, new_group_id]:
-            g_doc = await asyncio.to_thread(group_model.get_group, event_id, gid)
-            if g_doc:
-                regs = await asyncio.to_thread(reg_model.get_group_registrations, gid, event_id)
-                embed = build_roster_embed(g_doc, regs, g_doc["capacity"])
-                ch = guild.get_channel(g_doc.get("channel_id"))
-                if ch:
-                    msg_id = g_doc.get("roster_message_id")
-                    if msg_id:
-                        try:
-                            msg = await ch.fetch_message(msg_id)
-                            await msg.edit(embed=embed)
-                        except discord.NotFound:
-                            pass
+        # Refresh both rosters and board
+        await update_group_roster(interaction.guild, event_id, self.current_group_id)
+        await update_group_roster(interaction.guild, event_id, new_group_id)
+        await update_registration_board(interaction.guild, event_id)
 
         await interaction.followup.send(
             embed=success_embed(
