@@ -298,17 +298,39 @@ def build_slot_list_embed(group_doc, registrations):
     group_id = group_doc.get("group_id", "????")
     m1 = group_doc.get("match1", {})
     m2 = group_doc.get("match2", {})
+    capacity = group_doc.get("capacity", 21)
+    reserved_slots = group_doc.get("reserved_slots", 0)
+    reserved_teams = group_doc.get("reserved_teams", {})
+
+    # Map public registrations by their slot number
+    reg_by_slot = {r.get("slot_number"): r for r in registrations if r.get("slot_number") is not None}
+    unassigned_regs = [r for r in registrations if r.get("slot_number") is None]
 
     lines = []
-    for i, reg in enumerate(registrations, 1):
-        team = reg.get("team_name", "???")
-        captain = reg.get("owner_id", "")
-        lines.append(f"**Slot {i:02d}** — {team} │ <@{captain}>")
-
-    # Fill remaining as OPEN
-    cap = group_doc.get("capacity", 21)
-    for i in range(len(registrations) + 1, cap + 1):
-        lines.append(f"**Slot {i:02d}** — *OPEN*")
+    for i in range(capacity):
+        slot_num = i + 1
+        num = f"{slot_num:02d}"
+        if slot_num <= reserved_slots:
+            # Reserved slot
+            if str(slot_num) in reserved_teams:
+                team_name = reserved_teams[str(slot_num)]
+                lines.append(f"**Slot {num}** — {team_name} │ *Reserved*")
+            else:
+                lines.append(f"**Slot {num}** — RESERVED")
+        else:
+            # Public registration slot
+            if slot_num in reg_by_slot:
+                reg = reg_by_slot[slot_num]
+                tn = reg.get("team_name", "Unknown")
+                captain = reg.get("owner_id", "")
+                lines.append(f"**Slot {num}** — {tn} │ <@{captain}>")
+            elif unassigned_regs:
+                reg = unassigned_regs.pop(0)
+                tn = reg.get("team_name", "Unknown")
+                captain = reg.get("owner_id", "")
+                lines.append(f"**Slot {num}** — {tn} │ <@{captain}>")
+            else:
+                lines.append(f"**Slot {num}** — *OPEN*")
 
     slot_text = "\n".join(lines)
     embed = make_embed(
