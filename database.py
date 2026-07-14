@@ -24,7 +24,13 @@ def connect():
 
     print("⏳ Attempting MongoDB connection...", flush=True)
     try:
-        client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=10000)
+        client = MongoClient(
+            MONGO_URI,
+            serverSelectionTimeoutMS=10000,
+            maxPoolSize=50,
+            minPoolSize=10,
+            retryWrites=True
+        )
         client.admin.command("ping")
         print("✅ MongoDB connection successful!", flush=True)
     except Exception as e:

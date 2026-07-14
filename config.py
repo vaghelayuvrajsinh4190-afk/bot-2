@@ -137,11 +137,8 @@ class Theme:
         filled = int((current / maximum) * length) if maximum else 0
         return "`" + "█" * filled + "░" * (length - filled) + "`"
 
-    @staticmethod
-    def slot_bar(current, maximum, length=10):
-        """Generate a progress bar using solid blocks."""
-        filled = int((current / maximum) * length) if maximum else 0
-        return "`" + "█" * filled + "░" * (length - filled) + "`"
+    # Alias slot_bar to bar to prevent duplication
+    slot_bar = bar
 
     @staticmethod
     def group_color(count, mx):

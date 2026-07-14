@@ -32,7 +32,7 @@ from utils.permissions import (
     get_or_create_role, create_group_channel,
     create_day_category, cleanup_channel, cleanup_role, cleanup_category
 )
-from models import group as group_model, registration as reg_model, team_profile
+from models import group as group_model, registration as reg_model, team_profile, punishment
 from database import get_config, set_config, get_channel_config, set_channel_config
 from utils.permissions import grant_group_access
 from utils.updater import update_registration_board
@@ -79,11 +79,12 @@ class ProvisioningCog(commands.Cog):
     async def autopilot_loop(self):
         """
         Master autopilot loop — checks every minute for:
-        1. Midnight Reset (00:00 IST)
-        2. Registration Open (10:00 AM IST)
+        1. Midnight Reset (00:00 IST) — respects 'midnight_reset' toggle
+        2. Registration Open (10:00 AM IST) — respects 'auto_registration_open' toggle
         """
         utc_now = datetime.datetime.utcnow()
         local_now = utc_now + datetime.timedelta(hours=TIMEZONE_OFFSET)
+        today_str = local_now.strftime("%Y-%m-%d")
 
         if not self.bot.guilds:
             return
@@ -92,17 +93,48 @@ class ProvisioningCog(commands.Cog):
 
         # ─────── MIDNIGHT RESET (00:00 IST) ───────
         if local_now.hour == 0 and local_now.minute == 0:
-            await self._midnight_reset(guild, local_now)
+            midnight_enabled = await asyncio.to_thread(get_config, "midnight_reset", True)
+            if midnight_enabled:
+                last_reset = await asyncio.to_thread(get_config, "last_reset_date", "")
+                if last_reset != today_str:
+                    await self._midnight_reset(guild, local_now)
+                    await asyncio.to_thread(set_config, "last_reset_date", today_str)
+            else:
+                print("🔘 Midnight reset is DISABLED via config. Skipping.", flush=True)
 
         # ─────── REGISTRATION OPEN (10:00 AM IST or Admin Configured) ───────
-        open_hour = await asyncio.to_thread(get_config, "registration_open_hour", REGISTRATION_OPEN_HOUR)
-        open_minute = await asyncio.to_thread(get_config, "registration_open_minute", REGISTRATION_OPEN_MINUTE)
-        if local_now.hour == open_hour and local_now.minute == open_minute:
-            await self._registration_open(guild)
+        auto_reg_enabled = await asyncio.to_thread(get_config, "auto_registration_open", True)
+        if auto_reg_enabled:
+            open_hour = await asyncio.to_thread(get_config, "registration_open_hour", REGISTRATION_OPEN_HOUR)
+            open_minute = await asyncio.to_thread(get_config, "registration_open_minute", REGISTRATION_OPEN_MINUTE)
+            if local_now.hour == open_hour and local_now.minute == open_minute:
+                last_open = await asyncio.to_thread(get_config, "last_open_date", "")
+                if last_open != today_str:
+                    await self._registration_open(guild)
+                    await asyncio.to_thread(set_config, "last_open_date", today_str)
 
     @autopilot_loop.before_loop
     async def before_autopilot(self):
         await self.bot.wait_until_ready()
+
+        # ── Startup Catch-Up Reset check ──
+        midnight_enabled = await asyncio.to_thread(get_config, "midnight_reset", True)
+        if not midnight_enabled:
+            print("🔘 Midnight reset is DISABLED via config. Skipping catch-up.", flush=True)
+            return
+
+        if not self.bot.guilds:
+            return
+        guild = self.bot.guilds[0]
+        utc_now = datetime.datetime.utcnow()
+        local_now = utc_now + datetime.timedelta(hours=TIMEZONE_OFFSET)
+        today_str = local_now.strftime("%Y-%m-%d")
+
+        last_reset = await asyncio.to_thread(get_config, "last_reset_date", "")
+        if last_reset != today_str:
+            print(f"⚠️ Missed reset detected (last: '{last_reset}', today: '{today_str}'). Running catch-up reset...", flush=True)
+            await self._midnight_reset(guild, local_now)
+            await asyncio.to_thread(set_config, "last_reset_date", today_str)
 
     # ═══════════════════ MIDNIGHT RESET ═══════════════════
 
@@ -144,15 +176,21 @@ class ProvisioningCog(commands.Cog):
         print("🔒 Registration locked", flush=True)
 
         # ── Step 5: Auto-Provision New Day ──
-        event_id = get_today_event_id()
-        count = int(await asyncio.to_thread(get_config, "default_group_count", DEFAULT_GROUP_COUNT))
-        cap = int(await asyncio.to_thread(get_config, "default_group_capacity", DEFAULT_GROUP_CAPACITY))
+        auto_group_enabled = await asyncio.to_thread(get_config, "auto_group_generation", True)
+        if auto_group_enabled:
+            event_id = get_today_event_id()
+            count = int(await asyncio.to_thread(get_config, "default_group_count", DEFAULT_GROUP_COUNT))
+            cap = int(await asyncio.to_thread(get_config, "default_group_capacity", DEFAULT_GROUP_CAPACITY))
 
-        # Use configurable category name (no date logic)
-        category_name = await asyncio.to_thread(get_config, "default_category_name", DEFAULT_CATEGORY_NAME)
+            # Use configurable category name (no date logic)
+            category_name = await asyncio.to_thread(get_config, "default_category_name", DEFAULT_CATEGORY_NAME)
 
-        await self._auto_provision(guild, event_id, count, cap, category_name)
-        print(f"📦 Auto-provisioned {count} groups for {event_id}", flush=True)
+            await self._auto_provision(guild, event_id, count, cap, category_name)
+            print(f"📦 Auto-provisioned {count} groups for {event_id}", flush=True)
+        else:
+            print("🔘 Auto group generation is DISABLED via config. Skipping provisioning.", flush=True)
+            count = 0
+            category_name = "N/A"
 
         # ── Log to admin channel ──
         log_channel_id = await asyncio.to_thread(get_channel_config, "admin_log")

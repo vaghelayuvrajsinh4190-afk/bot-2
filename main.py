@@ -93,15 +93,24 @@ class MackBot(commands.Bot):
                 print(f"  ❌ Failed to load {cog}: {e}", flush=True)
                 traceback.print_exc()
 
-        # Sync slash commands
-        if GUILD_ID:
-            guild = discord.Object(id=int(GUILD_ID))
-            self.tree.copy_global_to(guild=guild)
-            await self.tree.sync(guild=guild)
-            print(f"🔄 Synced slash commands to guild {GUILD_ID}", flush=True)
+        # Sync slash commands dynamically to avoid rate limits
+        from database import get_config, set_config
+        commands_synced = await asyncio.to_thread(get_config, "commands_synced", False)
+        sync_requested = await asyncio.to_thread(get_config, "sync_commands_on_startup", False)
+
+        if not commands_synced or sync_requested:
+            if GUILD_ID:
+                guild = discord.Object(id=int(GUILD_ID))
+                self.tree.copy_global_to(guild=guild)
+                await self.tree.sync(guild=guild)
+                print(f"🔄 Synced slash commands to guild {GUILD_ID}", flush=True)
+            else:
+                await self.tree.sync()
+                print("🔄 Synced slash commands globally", flush=True)
+            await asyncio.to_thread(set_config, "commands_synced", True)
+            await asyncio.to_thread(set_config, "sync_commands_on_startup", False)
         else:
-            await self.tree.sync()
-            print("🔄 Synced slash commands globally", flush=True)
+            print("🔄 Skipping slash command sync (already synced). Set config 'sync_commands_on_startup' to True to force sync.", flush=True)
 
     @staticmethod
     def _async_exception_handler(loop, context):
@@ -186,7 +195,7 @@ async def on_app_command_error(interaction: discord.Interaction, error: discord.
                     embed=error_embed("❌ Error", f"An unexpected error occurred.\n`{str(error)[:200]}`"),
                     ephemeral=True
                 )
-            except:
+            except Exception:
                 pass
 
 

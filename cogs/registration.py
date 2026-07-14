@@ -296,6 +296,9 @@ class PlayerDetailsModal(ui.Modal, title="🎮 Player Roster — Step 2/3"):
             player_igns=player_igns,
         )
 
+        # Clean up the registration cache entry
+        registration_cache.pop(interaction.user.id, None)
+
         # Show teammate selection (Step 3)
         roster_text = "\n".join([f"  │  ✦ `{player_uids[i]}` — {player_igns[i]}" for i in range(len(player_igns))])
         embed = make_embed(
@@ -330,8 +333,7 @@ class ConfirmRegistrationView(ui.View):
     @ui.button(
         label="Confirm & Complete Registration",
         style=discord.ButtonStyle.primary,
-        emoji="✅",
-        custom_id="finalize_reg_btn"
+        emoji="✅"
     )
     async def confirm_registration(self, interaction: discord.Interaction, button: ui.Button):
         owner_id = str(interaction.user.id)
@@ -401,8 +403,12 @@ class ConfirmRegistrationView(ui.View):
         # Save teammate IDs to profile asynchronously
         await asyncio.to_thread(
             team_profile.save_profile,
-            owner_id, self.team_name, self.players, teammate_ids,
-            player_uids=self.player_uids, player_igns=self.player_igns
+            owner_id=owner_id,
+            team_name=self.team_name,
+            players=self.players,
+            teammate_ids=teammate_ids,
+            player_uids=self.player_uids,
+            player_igns=self.player_igns
         )
 
         # Grant group role

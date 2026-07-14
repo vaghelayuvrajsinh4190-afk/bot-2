@@ -151,10 +151,10 @@ class MoveTeamModal(ui.Modal, title="🔀 Move Team"):
             if member:
                 if old_role:
                     try: await member.remove_roles(old_role)
-                    except: pass
+                    except Exception: pass
                 if new_role:
                     try: await member.add_roles(new_role)
-                    except: pass
+                    except Exception: pass
 
         team_name = reg.get("team_name", "???")
 
@@ -752,25 +752,60 @@ class AdminPanelCog(commands.Cog):
 
     # ─────────────── CONFIG COMMANDS ───────────────
 
+    # ── Toggle settings that accept enable/disable ──
+    TOGGLE_SETTINGS = {
+        "auto_group_generation", "auto_registration_open", "midnight_reset",
+        "match_reminders", "waiting_list", "team_memory",
+    }
+    # ── String settings (no integer parsing) ──
+    STRING_SETTINGS = {
+        "default_category_name", "event_name", "event_mode",
+        "match_format", "group_naming_pattern",
+    }
+    # ── Human-readable descriptions for each toggle ──
+    TOGGLE_DESCRIPTIONS = {
+        "auto_group_generation": "Auto-create groups at midnight",
+        "auto_registration_open": "Auto-open registration at scheduled time",
+        "midnight_reset": "Run full midnight cleanup & reset cycle",
+        "match_reminders": "Send match reminder DMs to teams",
+        "waiting_list": "Enable waiting list when groups are full",
+        "team_memory": "Remember team profiles for 30 days",
+    }
+
     @app_commands.command(name="config", description="[Admin] Configure bot channels and settings")
     @app_commands.describe(
         setting="What to configure",
         channel="Channel to set (for channel settings)",
-        value="Value to set (for non-channel settings)"
+        value="Value to set (for non-channel settings — use enable/disable for toggles)"
     )
     @app_commands.choices(setting=[
-        app_commands.Choice(name="register_channel", value="register"),
-        app_commands.Choice(name="admin_channel", value="admin"),
-        app_commands.Choice(name="admin_log_channel", value="admin_log"),
-        app_commands.Choice(name="leaderboard_channel", value="leaderboard"),
-        app_commands.Choice(name="registered_teams_channel", value="registered_teams"),
-        app_commands.Choice(name="default_group_count", value="default_group_count"),
-        app_commands.Choice(name="default_group_capacity", value="default_group_capacity"),
-        app_commands.Choice(name="reminder_lead_minutes", value="reminder_lead_minutes"),
-        app_commands.Choice(name="lock_minutes", value="lock_minutes"),
-        app_commands.Choice(name="registration_open_hour", value="registration_open_hour"),
-        app_commands.Choice(name="registration_open_minute", value="registration_open_minute"),
-        app_commands.Choice(name="default_reserved_slots", value="default_reserved_slots"),
+        # ── Channel settings ──
+        app_commands.Choice(name="📢 register_channel", value="register"),
+        app_commands.Choice(name="📢 admin_channel", value="admin"),
+        app_commands.Choice(name="📢 admin_log_channel", value="admin_log"),
+        app_commands.Choice(name="📢 leaderboard_channel", value="leaderboard"),
+        app_commands.Choice(name="📢 registered_teams_channel", value="registered_teams"),
+        # ── Toggle settings (enable/disable) ──
+        app_commands.Choice(name="🔘 auto_group_generation", value="auto_group_generation"),
+        app_commands.Choice(name="🔘 auto_registration_open", value="auto_registration_open"),
+        app_commands.Choice(name="🔘 midnight_reset", value="midnight_reset"),
+        app_commands.Choice(name="🔘 match_reminders", value="match_reminders"),
+        app_commands.Choice(name="🔘 waiting_list", value="waiting_list"),
+        app_commands.Choice(name="🔘 team_memory", value="team_memory"),
+        # ── Numeric settings ──
+        app_commands.Choice(name="🔢 default_group_count", value="default_group_count"),
+        app_commands.Choice(name="🔢 default_group_capacity", value="default_group_capacity"),
+        app_commands.Choice(name="🔢 reminder_lead_minutes", value="reminder_lead_minutes"),
+        app_commands.Choice(name="🔢 lock_minutes", value="lock_minutes"),
+        app_commands.Choice(name="🔢 registration_open_hour", value="registration_open_hour"),
+        app_commands.Choice(name="🔢 registration_open_minute", value="registration_open_minute"),
+        app_commands.Choice(name="🔢 default_reserved_slots", value="default_reserved_slots"),
+        # ── String settings ──
+        app_commands.Choice(name="✏️ default_category_name", value="default_category_name"),
+        app_commands.Choice(name="✏️ event_name", value="event_name"),
+        app_commands.Choice(name="✏️ event_mode", value="event_mode"),
+        app_commands.Choice(name="✏️ match_format", value="match_format"),
+        app_commands.Choice(name="✏️ group_naming_pattern", value="group_naming_pattern"),
     ])
     @app_commands.checks.has_permissions(administrator=True)
     async def config_cmd(
@@ -780,7 +815,7 @@ class AdminPanelCog(commands.Cog):
         channel: discord.TextChannel = None,
         value: str = None
     ):
-        # Channel settings
+        # ── Channel settings ──
         if setting in ("register", "admin", "admin_log", "leaderboard", "registered_teams"):
             if not channel:
                 current = get_channel_config(setting)
@@ -805,7 +840,49 @@ class AdminPanelCog(commands.Cog):
                 embed=success_embed("✅ Config Updated", f"**{setting}_channel** set to {channel.mention}"),
                 ephemeral=True
             )
-        else:
+            return
+
+        # ── Toggle settings (enable/disable) ──
+        if setting in self.TOGGLE_SETTINGS:
+            desc = self.TOGGLE_DESCRIPTIONS.get(setting, setting)
+            if not value:
+                current = get_config(setting, True)
+                status = "🟢 Enabled" if current else "🔴 Disabled"
+                await interaction.response.send_message(
+                    embed=make_embed(
+                        f"🔘 {setting}",
+                        f"**{desc}**\n\n"
+                        f"**Current Status:** {status}\n\n"
+                        f"{Theme.THIN_SEP}\n"
+                        f"Use `/config {setting} value:enable` or `/config {setting} value:disable` to toggle.",
+                        Theme.INFO
+                    ),
+                    ephemeral=True
+                )
+                return
+
+            lowered = value.strip().lower()
+            if lowered in ("enable", "on", "true", "1", "yes"):
+                set_config(setting, True)
+                await interaction.response.send_message(
+                    embed=success_embed("✅ Enabled", f"**{desc}** is now 🟢 **Enabled**"),
+                    ephemeral=True
+                )
+            elif lowered in ("disable", "off", "false", "0", "no"):
+                set_config(setting, False)
+                await interaction.response.send_message(
+                    embed=success_embed("✅ Disabled", f"**{desc}** is now 🔴 **Disabled**"),
+                    ephemeral=True
+                )
+            else:
+                await interaction.response.send_message(
+                    embed=error_embed("❌ Invalid Value", f"Use `enable` or `disable` for toggle settings.\nExample: `/config {setting} value:enable`"),
+                    ephemeral=True
+                )
+            return
+
+        # ── String settings ──
+        if setting in self.STRING_SETTINGS:
             if not value:
                 current = get_config(setting, "Not set")
                 await interaction.response.send_message(
@@ -814,38 +891,54 @@ class AdminPanelCog(commands.Cog):
                 )
                 return
 
-            try:
-                int_value = int(value)
-                if setting == "registration_open_hour" and (int_value < 0 or int_value > 23):
-                    await interaction.response.send_message(
-                        embed=error_embed("❌ Invalid Value", "registration_open_hour must be between 0 and 23."),
-                        ephemeral=True
-                    )
-                    return
-                if setting == "registration_open_minute" and (int_value < 0 or int_value > 59):
-                    await interaction.response.send_message(
-                        embed=error_embed("❌ Invalid Value", "registration_open_minute must be between 0 and 59."),
-                        ephemeral=True
-                    )
-                    return
-                if setting == "default_reserved_slots" and (int_value < 0 or int_value > 3):
-                    await interaction.response.send_message(
-                        embed=error_embed("❌ Invalid Value", "default_reserved_slots must be between 0 and 3."),
-                        ephemeral=True
-                    )
-                    return
+            set_config(setting, value)
+            await interaction.response.send_message(
+                embed=success_embed("✅ Config Updated", f"**{setting}** set to `{value}`"),
+                ephemeral=True
+            )
+            return
 
-                set_config(setting, int_value)
+        # ── Numeric settings ──
+        if not value:
+            current = get_config(setting, "Not set")
+            await interaction.response.send_message(
+                embed=make_embed("📋 Current Config", f"**{setting}:** `{current}`", Theme.INFO),
+                ephemeral=True
+            )
+            return
+
+        try:
+            int_value = int(value)
+            if setting == "registration_open_hour" and (int_value < 0 or int_value > 23):
                 await interaction.response.send_message(
-                    embed=success_embed("✅ Config Updated", f"**{setting}** set to `{int_value}`"),
+                    embed=error_embed("❌ Invalid Value", "registration_open_hour must be between 0 and 23."),
                     ephemeral=True
                 )
-            except ValueError:
-                set_config(setting, value)
+                return
+            if setting == "registration_open_minute" and (int_value < 0 or int_value > 59):
                 await interaction.response.send_message(
-                    embed=success_embed("✅ Config Updated", f"**{setting}** set to `{value}`"),
+                    embed=error_embed("❌ Invalid Value", "registration_open_minute must be between 0 and 59."),
                     ephemeral=True
                 )
+                return
+            if setting == "default_reserved_slots" and (int_value < 0 or int_value > 3):
+                await interaction.response.send_message(
+                    embed=error_embed("❌ Invalid Value", "default_reserved_slots must be between 0 and 3."),
+                    ephemeral=True
+                )
+                return
+
+            set_config(setting, int_value)
+            await interaction.response.send_message(
+                embed=success_embed("✅ Config Updated", f"**{setting}** set to `{int_value}`"),
+                ephemeral=True
+            )
+        except ValueError:
+            set_config(setting, value)
+            await interaction.response.send_message(
+                embed=success_embed("✅ Config Updated", f"**{setting}** set to `{value}`"),
+                ephemeral=True
+            )
 
     # ─────────────── VIEW CONFIG ───────────────
 
@@ -959,9 +1052,17 @@ class AdminPanelCog(commands.Cog):
         )
         embeds.append(emb2)
 
-        # 3. 📂 Group Information
-        provisioning_cog = bot.get_cog("ProvisioningCog")
-        auto_generation = "Enabled" if provisioning_cog and provisioning_cog.autopilot_loop.is_running() else "Disabled"
+        # 3. 📂 Group Information & Feature Toggles
+        # Read toggle states from MongoDB (default: True = enabled)
+        toggle_auto_group = db_configs.get("auto_group_generation", True)
+        toggle_auto_reg = db_configs.get("auto_registration_open", True)
+        toggle_midnight = db_configs.get("midnight_reset", True)
+        toggle_reminders = db_configs.get("match_reminders", True)
+        toggle_waiting = db_configs.get("waiting_list", False)
+        toggle_memory = db_configs.get("team_memory", True)
+
+        def toggle_icon(val):
+            return "🟢 Enabled" if val else "🔴 Disabled"
         
         total_groups = len(all_groups)
         active_groups = sum(1 for g in all_groups if not g.get("archived"))
@@ -974,9 +1075,16 @@ class AdminPanelCog(commands.Cog):
         except Exception:
             next_group_id = f"G{total_groups + 1:04d}"
             
-        emb3 = make_embed(title="📂 Group Configuration", color=Theme.GOLD)
+        emb3 = make_embed(title="📂 Group & Autopilot Configuration", color=Theme.GOLD)
         emb3.description = (
-            f"◆ **Auto Group Generation:** `{auto_generation}`\n"
+            f"**── Feature Toggles ──**\n"
+            f"◆ **Auto Group Generation:** {toggle_icon(toggle_auto_group)}\n"
+            f"◆ **Auto Registration Open:** {toggle_icon(toggle_auto_reg)}\n"
+            f"◆ **Midnight Reset:** {toggle_icon(toggle_midnight)}\n"
+            f"◆ **Match Reminders:** {toggle_icon(toggle_reminders)}\n"
+            f"◆ **Waiting List:** {toggle_icon(toggle_waiting)}\n"
+            f"◆ **Team Memory (30-day):** {toggle_icon(toggle_memory)}\n\n"
+            f"**── Group Stats ──**\n"
             f"◆ **Total Groups Generated:** `{total_groups}`\n"
             f"◆ **Active Groups:** `{active_groups}`\n"
             f"◆ **Empty Groups:** `{empty_groups}`\n"

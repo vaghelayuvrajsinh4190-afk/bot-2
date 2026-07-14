@@ -14,9 +14,18 @@ from database import get_config, get_channel_config
 from models import group as group_model, registration as reg_model
 from utils.embeds import build_roster_embed, build_registration_board_embed
 
+from collections import OrderedDict
+
 # In-memory cache for embed hashes: { message_id: md5_hash }
 # Used to prevent unnecessary Discord API edit calls.
-_embed_hash_cache = {}
+# Bounded to 1000 entries to prevent memory leaks.
+_embed_hash_cache = OrderedDict()
+MAX_CACHE_SIZE = 1000
+
+def _cache_set(msg_id: int, val: str):
+    _embed_hash_cache[msg_id] = val
+    if len(_embed_hash_cache) > MAX_CACHE_SIZE:
+        _embed_hash_cache.popitem(last=False)
 
 def get_embed_hash(embed: discord.Embed) -> str:
     """Generate a stable hash of the embed content, ignoring timestamps."""
@@ -42,14 +51,14 @@ async def safe_edit_message(channel: discord.TextChannel, msg_id: int, embed: di
     try:
         partial_msg = channel.get_partial_message(msg_id)
         await partial_msg.edit(embed=embed)
-        _embed_hash_cache[msg_id] = new_hash
+        _cache_set(msg_id, new_hash)
         return msg_id
     except discord.NotFound:
         # Message was deleted
         if fallback_send:
             try:
                 new_msg = await channel.send(embed=embed)
-                _embed_hash_cache[new_msg.id] = new_hash
+                _cache_set(new_msg.id, new_hash)
                 return new_msg.id
             except discord.HTTPException as e:
                 logging.error(f"Failed to send fallback message in {channel.name}: {e}")
@@ -89,7 +98,7 @@ async def update_group_roster(guild: discord.Guild, event_id: str, group_id: str
         # Send a new one
         try:
             new_msg = await channel.send(embed=embed)
-            _embed_hash_cache[new_msg.id] = get_embed_hash(embed)
+            _cache_set(new_msg.id, get_embed_hash(embed))
             await asyncio.to_thread(group_model.update_roster_message, event_id, group_id, new_msg.id)
         except discord.HTTPException as e:
             logging.error(f"Failed to send initial roster msg in {channel.name}: {e}")
