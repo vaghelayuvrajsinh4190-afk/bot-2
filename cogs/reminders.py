@@ -197,13 +197,14 @@ class CancelSlotView(ui.View):
         options = []
         for g in open_groups[:25]:  # Discord max 25 options
             gid = g["group_id"]
-            count = g["current_count"]
-            cap = g["capacity"]
+            reserved = g.get("reserved_slots", 0)
+            pub_count = max(0, g["current_count"] - reserved)
+            pub_cap = g["capacity"] - reserved
             m1 = g.get("match1", {}).get("start", "TBD")
             options.append(
                 discord.SelectOption(
                     label=f"Group {gid}",
-                    description=f"{count}/{cap} filled │ M1: {m1}",
+                    description=f"{pub_count}/{pub_cap} filled │ M1: {m1}",
                     value=gid,
                     emoji="📍"
                 )

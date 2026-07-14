@@ -45,10 +45,14 @@ def build_roster_embed(group_doc, registrations, capacity):
     """
     group_id = group_doc.get("group_id", "????")
     count = group_doc.get("current_count", 0)
+    reserved_count = group_doc.get("reserved_slots", 0)
+    # Public counts exclude reserved slots for accurate display
+    public_count = max(0, count - reserved_count)
+    public_capacity = capacity - reserved_count
     display_name = f"Group {group_id}"
     status = Theme.group_status(count, capacity)
     color = Theme.group_color(count, capacity)
-    bar = Theme.bar(count, capacity, 16)
+    bar = Theme.bar(public_count, public_capacity, 16)
 
     # Build the match info
     match1 = group_doc.get("match1", {})
@@ -109,7 +113,8 @@ def build_roster_embed(group_doc, registrations, capacity):
     embed = make_embed(
         f"🏆  {display_name}  ─  Live Roster",
         f"📡 **Status:** {status}\n"
-        f"📊 **Slots:** **{count}/{capacity}** Filled\n"
+        f"📊 **Slots:** **{public_count}/{public_capacity}** Filled"
+        f"{f' │ 🔒 **{reserved_count}** Reserved' if reserved_count else ''}\n"
         f"▓ **Roster Fill:** {bar}\n\n"
         f"> **Match 1:** `{m1_start}` ─ `{m1_map}`\n"
         f"> **Match 2:** `{m2_start}` ─ `{m2_map}`",
@@ -142,11 +147,15 @@ def build_slot_availability_embed(groups, event_name="Scrims Qualifiers"):
         gid = g.get("group_id", "????")
         count = g.get("current_count", 0)
         cap = g.get("capacity", 21)
-        total_filled += count
-        total_capacity += cap
+        reserved = g.get("reserved_slots", 0)
+        # Public counts exclude reserved slots
+        pub_count = max(0, count - reserved)
+        pub_cap = cap - reserved
+        total_filled += pub_count
+        total_capacity += pub_cap
 
         status = Theme.group_status(count, cap)
-        bar = Theme.bar(count, cap, 10)
+        bar = Theme.bar(pub_count, pub_cap, 10)
 
         m1 = g.get("match1", {})
         m2 = g.get("match2", {})
@@ -155,7 +164,7 @@ def build_slot_availability_embed(groups, event_name="Scrims Qualifiers"):
 
         lines.append(
             f"**✦ Group {gid}** ── {status}\n"
-            f"  {bar}  `{count}/{cap} filled`\n"
+            f"  {bar}  `{pub_count}/{pub_cap} filled`\n"
             f"  ⏱ **Matchtimes:** `{m1_start}` │ `{m2_start}`"
         )
 
@@ -194,10 +203,14 @@ def build_registration_board_embed(groups=None, event_name="Daily Scrims"):
             gid = g.get("group_id", "????")
             count = g.get("current_count", 0)
             cap = g.get("capacity", 21)
-            total_filled += count
-            total_capacity += cap
+            reserved = g.get("reserved_slots", 0)
+            # Public counts exclude reserved slots
+            pub_count = max(0, count - reserved)
+            pub_cap = cap - reserved
+            total_filled += pub_count
+            total_capacity += pub_cap
 
-            circle_bar = Theme.slot_bar(count, cap, 10)
+            circle_bar = Theme.slot_bar(pub_count, pub_cap, 10)
             m1 = g.get("match1", {})
             m2 = g.get("match2", {})
             m1_map = m1.get("map", "TBD")
@@ -217,7 +230,7 @@ def build_registration_board_embed(groups=None, event_name="Daily Scrims"):
                 status_tag = ""
 
             group_lines.append(
-                f"{shift_emoji} **Group {gid}** — `{count}/{cap}` {circle_bar}{' ' + status_tag if status_tag else ''}\n"
+                f"{shift_emoji} **Group {gid}** — `{pub_count}/{pub_cap}` {circle_bar}{' ' + status_tag if status_tag else ''}\n"
                 f"   ⏱ M1: `{m1_start}` ({m1_map}) │ M2: `{m2_start}` ({m2_map})"
             )
     else:
@@ -316,6 +329,10 @@ def build_group_control_panel_embed(group_doc):
     m2 = group_doc.get("match2", {})
     count = group_doc.get("current_count", 0)
     cap = group_doc.get("capacity", 21)
+    reserved = group_doc.get("reserved_slots", 0)
+    # Public counts exclude reserved slots
+    pub_count = max(0, count - reserved)
+    pub_cap = cap - reserved
 
     embed = make_embed(
         f"⚙️ Group {group_id} — Control Panel",
@@ -324,7 +341,8 @@ def build_group_control_panel_embed(group_doc):
         f"│  **M1:** `{m1.get('start', 'TBD')}` │ IDP `{m1.get('idp', 'TBD')}` │ `{m1.get('map', 'TBD')}`\n"
         f"│  **M2:** `{m2.get('start', 'TBD')}` │ IDP `{m2.get('idp', 'TBD')}` │ `{m2.get('map', 'TBD')}`\n"
         f"╰────────────────────────────╯\n\n"
-        f"📊 **Slots:** `{count}/{cap}` │ {Theme.bar(count, cap, 10)}\n\n"
+        f"📊 **Slots:** `{pub_count}/{pub_cap}` │ {Theme.bar(pub_count, pub_cap, 10)}"
+        f"{f' │ 🔒 {reserved} Reserved' if reserved else ''}\n\n"
         f"Use the buttons below to manage this group.\n\n"
         f"**Row 1** — Admin Only\n"
         f"**Row 2** — Teams & Admins\n"

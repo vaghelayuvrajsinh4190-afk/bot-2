@@ -595,13 +595,14 @@ class TeamManageSubView(ui.View):
         options = []
         for g in open_groups[:25]:
             gid = g["group_id"]
-            count = g["current_count"]
-            cap = g["capacity"]
+            reserved = g.get("reserved_slots", 0)
+            pub_count = max(0, g["current_count"] - reserved)
+            pub_cap = g["capacity"] - reserved
             m1 = g.get("match1", {}).get("start", "TBD")
             options.append(
                 discord.SelectOption(
                     label=f"Group {gid}",
-                    description=f"{count}/{cap} filled │ M1: {m1}",
+                    description=f"{pub_count}/{pub_cap} filled │ M1: {m1}",
                     value=gid,
                     emoji="📍"
                 )
@@ -1101,7 +1102,10 @@ class AdminPanelCog(commands.Cog):
             gid = g.get("group_id")
             count = g.get("current_count", 0)
             cap = g.get("capacity", default_capacity)
-            group_lines.append(f"◆ **{gid}** • {count}/{cap}")
+            reserved = g.get("reserved_slots", 0)
+            pub_count = max(0, count - reserved)
+            pub_cap = cap - reserved
+            group_lines.append(f"◆ **{gid}** • {pub_count}/{pub_cap}")
             
         if not group_lines:
             group_lines.append("*No groups currently generated for today.*")
