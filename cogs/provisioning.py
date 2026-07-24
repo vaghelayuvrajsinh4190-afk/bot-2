@@ -15,7 +15,8 @@ import discord
 from discord.ext import commands, tasks
 from discord import app_commands
 
-from config import get_today_event_id, (
+from config import (
+    get_today_event_id,
     Theme, TIMEZONE_OFFSET,
     DEFAULT_GROUP_CAPACITY, DEFAULT_GROUP_COUNT,
     DEFAULT_CATEGORY_NAME, DEFAULT_RESERVED_SLOTS,

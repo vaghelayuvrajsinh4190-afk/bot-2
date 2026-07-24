@@ -423,14 +423,14 @@ class ScrimsResetCog(commands.Cog):
             if current.upper() in s.get("name", "").upper()
         ][:25]
 
-    # ═══════════════════ /viewconfig ═══════════════════
+    # ═══════════════════ /viewscrims ═══════════════════
 
     @app_commands.command(
-        name="viewconfig",
+        name="viewscrims",
         description="[Admin] View the current scrim reset configurations as a .json file",
     )
     @app_commands.checks.has_permissions(administrator=True)
-    async def viewconfig(self, interaction: discord.Interaction):
+    async def viewscrims(self, interaction: discord.Interaction):
         """
         Download the full scrim config as a .json file attachment.
         Uses file attachment (not embeds) to avoid Discord's 6000-char embed limit.
