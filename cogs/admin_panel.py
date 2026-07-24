@@ -965,7 +965,6 @@ class AdminPanelCog(commands.Cog):
         # Load values directly from config files, db, or runtime settings
         import config
         from config import (
-            get_today_event_id,
             DEFAULT_GROUP_CAPACITY, DEFAULT_GROUP_COUNT, DEFAULT_RESERVED_SLOTS,
             DEFAULT_CATEGORY_NAME, TIMEZONE_OFFSET, REGISTRATION_OPEN_HOUR, REGISTRATION_OPEN_MINUTE,
             DEFAULT_LOCK_MINUTES, DEFAULT_REMINDER_LEAD_MINUTES, load_schedule
