@@ -777,12 +777,20 @@ class AdminPanelCog(commands.Cog):
         "sync_commands_on_startup": "Sync slash commands on next bot restart",
     }
 
-    @app_commands.command(name="config", description="[Admin] Configure bot channels and settings")
+    @app_commands.command(name="config", description="[Admin] Configure bot channels and settings per scrim or globally")
     @app_commands.describe(
+        scrim="Select target scrim (SQ, T3, T2, T1) or Global",
         setting="What to configure",
         channel="Channel to set (for channel settings)",
         value="Value to set (for non-channel settings — use enable/disable for toggles)"
     )
+    @app_commands.choices(scrim=[
+        app_commands.Choice(name="🌐 Global", value="Global"),
+        app_commands.Choice(name="🏆 SQ Scrims (SQ)", value="SQ"),
+        app_commands.Choice(name="🔥 Tier 3 (T3)", value="T3"),
+        app_commands.Choice(name="⚔️ Tier 2 (T2)", value="T2"),
+        app_commands.Choice(name="👑 Tier 1 (T1)", value="T1"),
+    ])
     @app_commands.choices(setting=[
         # ── Channel settings ──
         app_commands.Choice(name="📢 register_channel", value="register"),
@@ -817,33 +825,56 @@ class AdminPanelCog(commands.Cog):
     async def config_cmd(
         self,
         interaction: discord.Interaction,
+        scrim: str,
         setting: str,
         channel: discord.TextChannel = None,
         value: str = None
     ):
+        scrim_target = scrim.upper().strip()
+        from models import scrim as scrim_model
+
+        # Ensure target scrim exists if not Global
+        if scrim_target != "GLOBAL":
+            scrim_model.ensure_scrim_exists(scrim_target, owner_id=str(interaction.user.id))
+
         # ── Channel settings ──
         if setting in ("register", "admin", "admin_log", "leaderboard", "registered_teams"):
             if not channel:
-                current = get_channel_config(setting)
+                if scrim_target == "GLOBAL":
+                    current = get_channel_config(setting)
+                else:
+                    current = scrim_model.get_scrim_channel(scrim_target, setting)
+
                 if current:
                     await interaction.response.send_message(
-                        embed=make_embed("📋 Current Config", f"**{setting}_channel:** <#{current}>", Theme.INFO),
+                        embed=make_embed(
+                            f"📋 Current Config ({scrim_target})",
+                            f"**{setting}_channel:** <#{current}>",
+                            Theme.INFO
+                        ),
                         ephemeral=True
                     )
                 else:
                     await interaction.response.send_message(
                         embed=make_embed(
-                            "📋 Not Set",
-                            f"**{setting}_channel** is not configured.\nUse `/config {setting} #channel` to set it.",
+                            f"📋 Not Set ({scrim_target})",
+                            f"**{setting}_channel** is not configured for **{scrim_target}**.\nUse `/config scrim:{scrim_target} setting:{setting} channel:#channel` to set it.",
                             Theme.WARNING
                         ),
                         ephemeral=True
                     )
                 return
 
-            set_channel_config(setting, channel.id)
+            if scrim_target == "GLOBAL":
+                set_channel_config(setting, channel.id)
+            else:
+                scrim_model.set_scrim_channel(scrim_target, setting, channel.id)
+
             await interaction.response.send_message(
-                embed=success_embed("✅ Config Updated", f"**{setting}_channel** set to {channel.mention}"),
+                embed=success_embed(
+                    f"✅ Config Updated ({scrim_target})",
+                    f"**{setting}_channel** for `{scrim_target}` set to {channel.mention}"
+                ),
                 ephemeral=True
             )
             return
@@ -852,15 +883,21 @@ class AdminPanelCog(commands.Cog):
         if setting in self.TOGGLE_SETTINGS:
             desc = self.TOGGLE_DESCRIPTIONS.get(setting, setting)
             if not value:
-                current = get_config(setting, True)
+                if scrim_target == "GLOBAL":
+                    current = get_config(setting, True)
+                else:
+                    current = scrim_model.get_scrim_module(scrim_target, setting)
+                    if current is False and setting not in ("verification", "check_in"):
+                        current = scrim_model.get_scrim_setting(scrim_target, setting, get_config(setting, True))
+
                 status = "🟢 Enabled" if current else "🔴 Disabled"
                 await interaction.response.send_message(
                     embed=make_embed(
-                        f"🔘 {setting}",
+                        f"🔘 {setting} ({scrim_target})",
                         f"**{desc}**\n\n"
                         f"**Current Status:** {status}\n\n"
                         f"{Theme.THIN_SEP}\n"
-                        f"Use `/config {setting} value:enable` or `/config {setting} value:disable` to toggle.",
+                        f"Use `/config scrim:{scrim_target} setting:{setting} value:enable` or `/config scrim:{scrim_target} setting:{setting} value:disable` to toggle.",
                         Theme.INFO
                     ),
                     ephemeral=True
@@ -868,47 +905,70 @@ class AdminPanelCog(commands.Cog):
                 return
 
             lowered = value.strip().lower()
-            if lowered in ("enable", "on", "true", "1", "yes"):
-                set_config(setting, True)
+            bool_val = lowered in ("enable", "on", "true", "1", "yes")
+            if lowered in ("enable", "on", "true", "1", "yes", "disable", "off", "false", "0", "no"):
+                if scrim_target == "GLOBAL":
+                    set_config(setting, bool_val)
+                else:
+                    scrim_model.set_scrim_module(scrim_target, setting, bool_val)
+                    scrim_model.set_scrim_setting(scrim_target, setting, bool_val)
+
+                status_str = "🟢 **Enabled**" if bool_val else "🔴 **Disabled**"
+                title_str = "✅ Enabled" if bool_val else "✅ Disabled"
                 await interaction.response.send_message(
-                    embed=success_embed("✅ Enabled", f"**{desc}** is now 🟢 **Enabled**"),
-                    ephemeral=True
-                )
-            elif lowered in ("disable", "off", "false", "0", "no"):
-                set_config(setting, False)
-                await interaction.response.send_message(
-                    embed=success_embed("✅ Disabled", f"**{desc}** is now 🔴 **Disabled**"),
+                    embed=success_embed(
+                        f"{title_str} ({scrim_target})",
+                        f"**{desc}** for `{scrim_target}` is now {status_str}"
+                    ),
                     ephemeral=True
                 )
             else:
                 await interaction.response.send_message(
-                    embed=error_embed("❌ Invalid Value", f"Use `enable` or `disable` for toggle settings.\nExample: `/config {setting} value:enable`"),
+                    embed=error_embed("❌ Invalid Value", f"Use `enable` or `disable` for toggle settings.\nExample: `/config scrim:{scrim_target} setting:{setting} value:enable`"),
                     ephemeral=True
                 )
             return
 
         # ── String settings ──
         if setting in self.STRING_SETTINGS:
+            setting_key = "category_name" if setting == "default_category_name" else setting
+
             if not value:
-                current = get_config(setting, "Not set")
+                if scrim_target == "GLOBAL":
+                    current = get_config(setting, "Not set")
+                else:
+                    current = scrim_model.get_scrim_setting(scrim_target, setting_key, get_config(setting, "Not set"))
+
                 await interaction.response.send_message(
-                    embed=make_embed("📋 Current Config", f"**{setting}:** `{current}`", Theme.INFO),
+                    embed=make_embed(f"📋 Current Config ({scrim_target})", f"**{setting}:** `{current}`", Theme.INFO),
                     ephemeral=True
                 )
                 return
 
-            set_config(setting, value)
+            if scrim_target == "GLOBAL":
+                set_config(setting, value)
+            else:
+                scrim_model.set_scrim_setting(scrim_target, setting_key, value)
+                if setting == "default_category_name":
+                    scrim_model.set_scrim_setting(scrim_target, "category_name", value)
+
             await interaction.response.send_message(
-                embed=success_embed("✅ Config Updated", f"**{setting}** set to `{value}`"),
+                embed=success_embed(f"✅ Config Updated ({scrim_target})", f"**{setting}** for `{scrim_target}` set to `{value}`"),
                 ephemeral=True
             )
             return
 
         # ── Numeric settings ──
+        setting_key = setting.replace("default_", "") if setting in ("default_group_count", "default_group_capacity", "default_reserved_slots") else setting
+
         if not value:
-            current = get_config(setting, "Not set")
+            if scrim_target == "GLOBAL":
+                current = get_config(setting, "Not set")
+            else:
+                current = scrim_model.get_scrim_setting(scrim_target, setting_key, get_config(setting, "Not set"))
+
             await interaction.response.send_message(
-                embed=make_embed("📋 Current Config", f"**{setting}:** `{current}`", Theme.INFO),
+                embed=make_embed(f"📋 Current Config ({scrim_target})", f"**{setting}:** `{current}`", Theme.INFO),
                 ephemeral=True
             )
             return
@@ -934,15 +994,25 @@ class AdminPanelCog(commands.Cog):
                 )
                 return
 
-            set_config(setting, int_value)
+            if scrim_target == "GLOBAL":
+                set_config(setting, int_value)
+            else:
+                scrim_model.set_scrim_setting(scrim_target, setting_key, int_value)
+                if setting != setting_key:
+                    scrim_model.set_scrim_setting(scrim_target, setting, int_value)
+
             await interaction.response.send_message(
-                embed=success_embed("✅ Config Updated", f"**{setting}** set to `{int_value}`"),
+                embed=success_embed(f"✅ Config Updated ({scrim_target})", f"**{setting}** for `{scrim_target}` set to `{int_value}`"),
                 ephemeral=True
             )
         except ValueError:
-            set_config(setting, value)
+            if scrim_target == "GLOBAL":
+                set_config(setting, value)
+            else:
+                scrim_model.set_scrim_setting(scrim_target, setting_key, value)
+
             await interaction.response.send_message(
-                embed=success_embed("✅ Config Updated", f"**{setting}** set to `{value}`"),
+                embed=success_embed(f"✅ Config Updated ({scrim_target})", f"**{setting}** for `{scrim_target}` set to `{value}`"),
                 ephemeral=True
             )
 
@@ -1015,11 +1085,138 @@ class AdminPanelCog(commands.Cog):
             
         return embeds
 
-    @app_commands.command(name="viewconfig", description="[Admin] View all bot configuration")
+    @app_commands.command(name="viewconfig", description="[Admin] View bot configuration per scrim or globally")
+    @app_commands.describe(scrim="Target scrim to view configuration for (default: Global)")
+    @app_commands.choices(scrim=[
+        app_commands.Choice(name="🌐 Global", value="Global"),
+        app_commands.Choice(name="🏆 SQ Scrims (SQ)", value="SQ"),
+        app_commands.Choice(name="🔥 Tier 3 (T3)", value="T3"),
+        app_commands.Choice(name="⚔️ Tier 2 (T2)", value="T2"),
+        app_commands.Choice(name="👑 Tier 1 (T1)", value="T1"),
+    ])
     @app_commands.checks.has_permissions(administrator=True)
-    async def view_config(self, interaction: discord.Interaction):
+    async def view_config(self, interaction: discord.Interaction, scrim: str = "Global"):
         await interaction.response.defer(ephemeral=True)
 
+        scrim_target = scrim.upper().strip()
+        from models import scrim as scrim_model
+
+        # ── Per-Scrim Configuration View ──
+        if scrim_target != "GLOBAL":
+            scrim_doc = scrim_model.get_scrim(scrim_target)
+            if not scrim_doc:
+                await interaction.followup.send(
+                    embed=make_embed(
+                        f"📋 Scrim `{scrim_target}` Not Initialized",
+                        f"Scrim **{scrim_target}** has not been initialized in the database yet.\n\n"
+                        f"**To initialize & configure:**\n"
+                        f"• Use `/config scrim:{scrim_target} setting:register_channel channel:#channel` to configure channels.\n"
+                        f"• Or use `/scrim create` to set up `{scrim_target}` with custom parameters.",
+                        Theme.WARNING
+                    ),
+                    ephemeral=True
+                )
+                return
+
+            s_id = scrim_doc.get("scrim_id", scrim_target)
+            s_name = scrim_doc.get("name", f"{s_id} Scrims")
+            s_desc = scrim_doc.get("description", "No description provided")
+            s_status = scrim_doc.get("status", "active")
+            s_color = scrim_doc.get("embed_color", "#BF5AF2")
+            s_owner = scrim_doc.get("owner_id", "system")
+            s_created = scrim_doc.get("created_at", "N/A")[:10]
+
+            settings = scrim_doc.get("settings", {})
+            channels = scrim_doc.get("channels", {})
+            modules = scrim_doc.get("modules", {})
+            schedule = scrim_doc.get("schedule", [])
+            points_cfg = scrim_doc.get("points_config", {})
+
+            status_emoji = {"active": "🟢", "disabled": "🔴", "archived": "📦"}.get(s_status, "❓")
+
+            # Page 1: Overview & Settings
+            p1_lines = [
+                f"🆔 **Scrim ID:** `{s_id}`",
+                f"📛 **Display Name:** {s_name}",
+                f"📝 **Description:** {s_desc}",
+                f"📊 **Status:** {status_emoji} `{s_status}`",
+                f"🎨 **Embed Color:** `{s_color}`",
+                f"👤 **Owner:** <@{s_owner}>",
+                f"📅 **Created At:** `{s_created}`",
+                "",
+                "**── Operational Settings ──**",
+                f"◆ **Capacity Per Group:** `{settings.get('capacity', 21)} teams`",
+                f"◆ **Default Group Count:** `{settings.get('group_count', 12)} groups`",
+                f"◆ **Reserved Slots:** `{settings.get('reserved_slots', 1)} slot(s)`",
+                f"◆ **Lock Minutes:** `{settings.get('lock_minutes', 20)} min before match`",
+                f"◆ **Reminder Lead Time:** `{settings.get('reminder_lead_minutes', 30)} min before match`",
+                f"◆ **Reg Open Time:** `{settings.get('registration_open_hour', 10):02d}:{settings.get('registration_open_minute', 0):02d} IST`",
+                f"◆ **Group Naming Format:** `{settings.get('group_naming_format', '{scrim_id} Group {number:02d}')}`",
+                f"◆ **Category Name:** `{settings.get('category_name', '📋 SCRIMS')}`",
+                f"◆ **Channel Mode:** `{settings.get('channel_mode', 'shared')}`",
+            ]
+
+            # Page 2: Channels
+            p2_lines = ["**── Configured Scrim Channels ──**"]
+            for ch_type in ("register", "admin_log", "leaderboard", "registered_teams", "results", "announcements"):
+                ch_id = channels.get(ch_type)
+                if ch_id:
+                    p2_lines.append(f"  ◆ **{ch_type}:** <#{ch_id}> (`{ch_id}`)")
+                else:
+                    global_ch = get_channel_config(ch_type)
+                    if global_ch:
+                        p2_lines.append(f"  ◆ **{ch_type}:** *Shared / Global* (<#{global_ch}>)")
+                    else:
+                        p2_lines.append(f"  ◆ **{ch_type}:** `Not set`")
+
+            # Page 3: Modules
+            p3_lines = ["**── Module Status ──**"]
+            if modules:
+                for mod_k, mod_v in sorted(modules.items()):
+                    icon = "🟢 Enabled" if mod_v else "🔴 Disabled"
+                    p3_lines.append(f"  ◆ **{mod_k}:** {icon}")
+            else:
+                p3_lines.append("  *No custom modules configured.*")
+
+            # Page 4: Schedule & Points
+            p4_lines = ["**── Match Schedule Summary ──**"]
+            if schedule:
+                for entry in schedule[:12]:
+                    gn = entry.get("group_number", "?")
+                    m1 = entry.get("match1", {})
+                    m2 = entry.get("match2", {})
+                    p4_lines.append(
+                        f"  ◆ Group **G{gn:02d}**: Match 1 `{m1.get('start', 'TBD')}` ({m1.get('map', 'TBD')}) │ "
+                        f"Match 2 `{m2.get('start', 'TBD')}` ({m2.get('map', 'TBD')})"
+                    )
+                if len(schedule) > 12:
+                    p4_lines.append(f"  *...and {len(schedule) - 12} more groups scheduled*")
+            else:
+                p4_lines.append("  *No custom schedule set for this scrim (using default).*")
+
+            p4_lines.append("")
+            p4_lines.append("**── Points Configuration ──**")
+            p4_lines.append(f"  ◆ **Kill Points:** `{points_cfg.get('kill_points', 1)}`")
+            pos_pts = points_cfg.get("position_points", {})
+            if pos_pts:
+                pts_summary = ", ".join(f"#{rank}: {pts}pt" for rank, pts in sorted(pos_pts.items(), key=lambda x: int(x[0])) if pts > 0)
+                p4_lines.append(f"  ◆ **Placement Points:** `{pts_summary or 'None'}`")
+
+            scrim_embeds = []
+            scrim_embeds.extend(self.paginate_logical_page(f"⚙️ {s_name} ({s_id}) — Overview & Settings", p1_lines, [], Theme.PREMIUM))
+            scrim_embeds.extend(self.paginate_logical_page(f"📢 {s_name} ({s_id}) — Channels", p2_lines, [], Theme.ROSE))
+            scrim_embeds.extend(self.paginate_logical_page(f"🔌 {s_name} ({s_id}) — Modules", p3_lines, [], Theme.INFO))
+            scrim_embeds.extend(self.paginate_logical_page(f"📅 {s_name} ({s_id}) — Schedule & Points", p4_lines, [], Theme.GOLD))
+
+            total_pages = len(scrim_embeds)
+            for idx, emb in enumerate(scrim_embeds):
+                emb.set_footer(text=f"Page {idx+1} of {total_pages} │ {s_name} Scrim Config")
+
+            view = ConfigPaginationView(scrim_embeds, interaction.user.id)
+            await interaction.followup.send(embed=scrim_embeds[0], view=view, ephemeral=True)
+            return
+
+        # ── Global Configuration View ──
         # Retrieve MongoDB client and config collection
         from database import bot_config as config_collection, _client
         all_configs = list(config_collection.find({}))
@@ -1221,7 +1418,7 @@ class AdminPanelCog(commands.Cog):
         ]
         reg_channel_id = get_channel_config("register")
         announcement_channel_id = db_configs.get("channel_announcement") or db_configs.get("channel_announcements")
-        if not announcement_channel_id:
+        if not announcement_channel_id and guild:
             ann_ch = discord.utils.get(guild.text_channels, name="announcements") or discord.utils.get(guild.text_channels, name="announcement")
             if ann_ch:
                 announcement_channel_id = ann_ch.id

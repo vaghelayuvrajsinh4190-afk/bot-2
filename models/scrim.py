@@ -138,6 +138,28 @@ def get_scrim(scrim_id: str):
     return scrims_collection.find_one({"scrim_id": scrim_id.upper()})
 
 
+def ensure_scrim_exists(scrim_id: str, owner_id: str = "system"):
+    """Ensure a scrim document exists in DB, creating it if missing."""
+    scrim_id_upper = scrim_id.upper()
+    existing = get_scrim(scrim_id_upper)
+    if not existing:
+        name_map = {
+            "SQ": "SQ Scrims",
+            "T3": "Tier 3 Scrims",
+            "T2": "Tier 2 Scrims",
+            "T1": "Tier 1 Scrims",
+        }
+        display_name = name_map.get(scrim_id_upper, f"{scrim_id_upper} Scrims")
+        return create_scrim(
+            scrim_id=scrim_id_upper,
+            name=display_name,
+            owner_id=owner_id,
+            description=f"Auto-created {display_name}"
+        )
+    return existing
+
+
+
 def get_all_scrims():
     """Get all scrims, sorted by creation date."""
     return list(scrims_collection.find({}).sort("created_at", 1))

@@ -222,3 +222,51 @@ DEFAULT_POSITION_POINTS = {
     "6": 4, "7": 2, "8": 1, "9": 0, "10": 0,
     "11": 0, "12": 0, "13": 0, "14": 0, "15": 0, "16": 0
 }
+
+
+# ═══════════════════ SCRIM CONFIG LOADERS ═══════════════════
+
+def get_effective_scrim_config(scrim_id: str = None, key: str = None, default=None):
+    """
+    Get a setting value for a specific scrim or global fallback.
+    If scrim_id is provided and not 'Global', checks scrim settings first.
+    """
+    if scrim_id and scrim_id.upper() != "GLOBAL":
+        try:
+            from models.scrim import get_scrim_setting
+            val = get_scrim_setting(scrim_id.upper(), key)
+            if val is not None:
+                return val
+        except Exception:
+            pass
+
+    try:
+        from database import get_config
+        val = get_config(key)
+        if val is not None:
+            return val
+    except Exception:
+        pass
+
+    return default
+
+
+def get_effective_channel(scrim_id: str = None, channel_type: str = None):
+    """
+    Get channel ID for a specific scrim or global fallback.
+    """
+    if scrim_id and scrim_id.upper() != "GLOBAL":
+        try:
+            from models.scrim import get_scrim_channel
+            ch_id = get_scrim_channel(scrim_id.upper(), channel_type)
+            if ch_id is not None:
+                return ch_id
+        except Exception:
+            pass
+
+    try:
+        from database import get_channel_config
+        return get_channel_config(channel_type)
+    except Exception:
+        return None
+
