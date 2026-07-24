@@ -610,36 +610,54 @@ class ProvisioningCog(commands.Cog):
             await asyncio.sleep(1.0)
 
         default_res = int(settings.get("reserved_slots", DEFAULT_RESERVED_SLOTS))
+        channel_mode = settings.get("channel_mode", "shared").lower()
 
-        # ── CREATE GROUP CATEGORIES & CHANNELS WITH AUTO-POSITIONING ──
+        # In 'shared' mode, create 1 single category for all group channels
+        shared_category = None
+        if channel_mode == "shared":
+            single_cat_name = settings.get("category_name") or f"📋 {scrim_id.upper()} SCRIMS"
+            shared_category = discord.utils.get(guild.categories, name=single_cat_name)
+            if not shared_category:
+                shared_category = await create_positioned_category(
+                    guild=guild,
+                    category_name=single_cat_name,
+                    position=base_pos + 1,
+                    template_category=template_cat,
+                    reason=f"[{scrim_id.upper()}] Single category for all channels"
+                )
+            if not shared_category:
+                shared_category = reg_category
+
+        # ── CREATE GROUP CHANNELS (SHARED CATEGORY OR SEPARATE CATEGORIES) ──
         created_groups = []
         for i in range(1, count + 1):
             group_id = generate_group_id(i)
             group_num = starting_num + i - 1
 
-            # Format Group Category Name dynamically
-            try:
-                cat_name = naming_format.format(
-                    scrim_name=scrim_name,
-                    scrim_id=scrim_id.upper(),
-                    number=group_num
+            if channel_mode == "separate":
+                # Create separate category per group
+                try:
+                    cat_name = naming_format.format(
+                        scrim_name=scrim_name,
+                        scrim_id=scrim_id.upper(),
+                        number=group_num
+                    )
+                except Exception:
+                    cat_name = f"{scrim_id.upper()} Group {group_num:02d}"
+
+                target_pos = base_pos + i
+                group_cat = await create_positioned_category(
+                    guild=guild,
+                    category_name=cat_name,
+                    position=target_pos,
+                    template_category=template_cat,
+                    reason=f"[{scrim_id.upper()}] Group category for {group_id}"
                 )
-            except Exception:
-                cat_name = f"{scrim_id.upper()} Group {group_num:02d}"
-
-            # Calculate position directly below Registration Category
-            target_pos = base_pos + i
-
-            # Create Group Category dynamically positioned directly below Registration Category
-            group_cat = await create_positioned_category(
-                guild=guild,
-                category_name=cat_name,
-                position=target_pos,
-                template_category=template_cat,
-                reason=f"[{scrim_id.upper()}] Group category for {group_id}"
-            )
-            if not group_cat:
-                group_cat = reg_category
+                if not group_cat:
+                    group_cat = reg_category
+            else:
+                # Shared mode: Place all channels into 1 single category
+                group_cat = shared_category or reg_category
 
             # Get schedule for this group
             sched = None
