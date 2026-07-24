@@ -91,9 +91,9 @@ def create_indexes():
     bot_config.create_index("key", unique=True)
 
     # match_results: lookup by event_id + group_id
-    match_results.create_index([(("event_id", ASCENDING), ("group_id", ASCENDING))])
+    match_results.create_index([("event_id", ASCENDING), ("group_id", ASCENDING)])
     # Multi-scrim index
-    match_results.create_index([(("scrim_id", ASCENDING), ("event_id", ASCENDING), ("group_id", ASCENDING))])
+    match_results.create_index([("scrim_id", ASCENDING), ("event_id", ASCENDING), ("group_id", ASCENDING)])
 
     # scrims: lookup by scrim_id
     scrims.create_index("scrim_id", unique=True)
