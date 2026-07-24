@@ -129,7 +129,8 @@ class HelpDropdown(ui.Select):
             f"  `/lockgroup G0001` — Lock and publish slot list\n"
             f"  `/slotlist G0001` — Publish slot list without locking\n"
             f"  `/unban @user` — Remove a ban\n"
-            f"  `/banlist` — View active bans\n\n{Theme.SEP}",
+            f"  `/banlist` — View active bans\n"
+            f"  `/sync` or `!sync` — Sync slash commands to Discord\n\n{Theme.SEP}",
             Theme.ACCENT, "📖 Admin Panel"
         )
 
@@ -185,7 +186,10 @@ class HelpDropdown(ui.Select):
             f"  ◆ `default_group_capacity` — Teams per group (default 21)\n"
             f"  ◆ `reminder_lead_minutes` — Reminder before match (default 30)\n"
             f"  ◆ `lock_minutes` — Lock cancel/reschedule before match (default 20)\n\n"
-            f"**`/viewconfig`** — See all current settings\n\n{Theme.SEP}",
+            f"**Other Settings (Enable/Disable):**\n"
+            f"  ◆ `sync_commands_on_startup` — Sync commands on next bot restart\n\n"
+            f"**`/viewconfig`** — See all current settings\n"
+            f"**`/viewscrims`** — Download scrim configurations\n\n{Theme.SEP}",
             Theme.PREMIUM, "📖 Configuration"
         )
 
