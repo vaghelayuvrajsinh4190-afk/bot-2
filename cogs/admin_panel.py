@@ -1036,6 +1036,12 @@ class AdminPanelCog(commands.Cog):
         from models import group as group_model, registration as reg_model
         from models.scrim import get_all_scrims
         import inspect
+        config_configs = {}
+        for name, val in inspect.getmembers(config):
+            if name.isupper() and not inspect.ismodule(val) and not inspect.isroutine(val):
+                if name in ("TOKEN", "MONGO_URI"):
+                    continue
+                config_configs[name] = val
 
         guild = interaction.guild
         bot = interaction.client
