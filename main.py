@@ -199,6 +199,23 @@ async def on_app_command_error(interaction: discord.Interaction, error: discord.
             except Exception:
                 pass
 
+@bot.command(name="sync")
+@commands.has_permissions(administrator=True)
+async def manual_sync(ctx):
+    """[Admin] Manually sync slash commands to Discord."""
+    try:
+        from config import GUILD_ID
+        if GUILD_ID:
+            guild = discord.Object(id=int(GUILD_ID))
+            bot.tree.copy_global_to(guild=guild)
+            synced = await bot.tree.sync(guild=guild)
+            await ctx.send(f"✅ Synced {len(synced)} slash commands to guild `{GUILD_ID}`.")
+        else:
+            synced = await bot.tree.sync()
+            await ctx.send(f"✅ Synced {len(synced)} slash commands globally.")
+    except Exception as e:
+        await ctx.send(f"❌ Failed to sync: `{str(e)}`")
+
 
 # ═══════════════════ STARTUP ═══════════════════
 

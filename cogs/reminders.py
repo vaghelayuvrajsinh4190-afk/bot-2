@@ -503,24 +503,24 @@ class RemindersCog(commands.Cog):
             m2_start = g.get("match2", {}).get("start")
             if m2_start and m2_start != "TBD" and not g.get("noshow_check_done", False):
                 try:
-                    m2_dt = parse_match_time(event_id, m2_start)
+                    m2_dt = parse_match_time(g["event_id"], m2_start)
                     deadline_dt = m2_dt + datetime.timedelta(minutes=60)
                     
                     if local_now >= deadline_dt:
                         from database import groups as groups_collection
                         await asyncio.to_thread(
                             groups_collection.update_one,
-                            {"event_id": event_id, "group_id": g["group_id"]},
+                            {"event_id": g["event_id"], "group_id": g["group_id"]},
                             {"$set": {"noshow_check_done": True}}
                         )
                         
-                        regs = await asyncio.to_thread(reg_model.get_group_registrations, g["group_id"], event_id)
+                        regs = await asyncio.to_thread(reg_model.get_group_registrations, g["group_id"], g["event_id"])
                         log_ch_id = await asyncio.to_thread(get_channel_config, "admin_log")
                         log_ch = guild.get_channel(log_ch_id) if log_ch_id else None
                         
                         for reg in regs:
                             if not reg.get("ss_submitted", False):
-                                await asyncio.to_thread(reg_model.mark_no_show, reg["owner_id"], event_id)
+                                await asyncio.to_thread(reg_model.mark_no_show, reg["owner_id"], g["event_id"])
                                 
                                 channel = guild.get_channel(g.get("channel_id"))
                                 if channel:
@@ -537,7 +537,7 @@ class RemindersCog(commands.Cog):
                                         f"👤 **Captain:** <@{reg['owner_id']}>\n"
                                         f"🏷️ **Team:** `{reg['team_name']}`\n"
                                         f"📍 **Group:** `{g['group_id']}`\n"
-                                        f"📅 **Event:** `{event_id}`\n\n{Theme.SEP}",
+                                        f"📅 **Event:** `{g['event_id']}`\n\n{Theme.SEP}",
                                         Theme.WARNING
                                     )
                                     await log_ch.send(admin_log_embed)

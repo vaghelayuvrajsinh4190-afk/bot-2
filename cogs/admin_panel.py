@@ -759,7 +759,7 @@ class AdminPanelCog(commands.Cog):
     # ── Toggle settings that accept enable/disable ──
     TOGGLE_SETTINGS = {
         "auto_group_generation", "auto_registration_open", "midnight_reset",
-        "match_reminders", "waiting_list", "team_memory",
+        "match_reminders", "waiting_list", "team_memory", "sync_commands_on_startup",
     }
     # ── String settings (no integer parsing) ──
     STRING_SETTINGS = {
@@ -774,6 +774,7 @@ class AdminPanelCog(commands.Cog):
         "match_reminders": "Send match reminder DMs to teams",
         "waiting_list": "Enable waiting list when groups are full",
         "team_memory": "Remember team profiles for 30 days",
+        "sync_commands_on_startup": "Sync slash commands on next bot restart",
     }
 
     @app_commands.command(name="config", description="[Admin] Configure bot channels and settings")
@@ -796,6 +797,7 @@ class AdminPanelCog(commands.Cog):
         app_commands.Choice(name="🔘 match_reminders", value="match_reminders"),
         app_commands.Choice(name="🔘 waiting_list", value="waiting_list"),
         app_commands.Choice(name="🔘 team_memory", value="team_memory"),
+        app_commands.Choice(name="🔘 sync_commands_on_startup", value="sync_commands_on_startup"),
         # ── Numeric settings ──
         app_commands.Choice(name="🔢 default_group_count", value="default_group_count"),
         app_commands.Choice(name="🔢 default_group_capacity", value="default_group_capacity"),
@@ -962,7 +964,8 @@ class AdminPanelCog(commands.Cog):
 
         # Load values directly from config files, db, or runtime settings
         import config
-        from config import get_today_event_id, (
+        from config import (
+            get_today_event_id,
             DEFAULT_GROUP_CAPACITY, DEFAULT_GROUP_COUNT, DEFAULT_RESERVED_SLOTS,
             DEFAULT_CATEGORY_NAME, TIMEZONE_OFFSET, REGISTRATION_OPEN_HOUR, REGISTRATION_OPEN_MINUTE,
             DEFAULT_LOCK_MINUTES, DEFAULT_REMINDER_LEAD_MINUTES, load_schedule
