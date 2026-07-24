@@ -562,13 +562,19 @@ class ProvisioningCog(commands.Cog):
         naming_format = settings.get("group_naming_format", "{scrim_id} Group {number:02d}")
         starting_num = settings.get("starting_number", 1)
 
-        # ── AUTO-CREATE #registration CHANNEL INSIDE REGISTRATION CATEGORY ──
-        reg_in_category = None
-        if reg_category:
+        # ── LOCATE OR CREATE REGISTRATION TARGET CHANNEL ──
+        configured_reg_id = get_effective_channel(scrim_id, "register")
+        reg_target_channel = None
+
+        if configured_reg_id:
+            reg_target_channel = guild.get_channel(configured_reg_id)
+
+        # Only auto-create #registration in category if NO custom register channel is configured
+        if not reg_target_channel and reg_category:
             try:
-                reg_in_category = discord.utils.get(reg_category.text_channels, name="registration")
-                if not reg_in_category:
-                    reg_in_category = await guild.create_text_channel(
+                reg_target_channel = discord.utils.get(reg_category.text_channels, name="registration")
+                if not reg_target_channel:
+                    reg_target_channel = await guild.create_text_channel(
                         name="registration",
                         category=reg_category,
                         topic=f"📥 Register here for today's {scrim_name}!",
@@ -593,19 +599,19 @@ class ProvisioningCog(commands.Cog):
         await asyncio.sleep(1.0)
 
         # ── AUTO-DEPLOY REGISTRATION EMBED + PERSISTENT BUTTON ──
-        if reg_in_category:
+        if reg_target_channel:
             try:
                 all_groups_current = await asyncio.to_thread(group_model.get_all_groups, event_id)
                 embed = build_registration_board_embed(all_groups_current, event_name=scrim_name)
                 from cogs.registration import PersistentRegisterView
                 view = PersistentRegisterView(scrim_id=scrim_id, locked=False)
-                board_msg = await reg_in_category.send(embed=embed, view=view)
+                board_msg = await reg_target_channel.send(embed=embed, view=view)
 
-                await asyncio.to_thread(set_config, f"category_reg_channel_{event_id}", reg_in_category.id)
+                await asyncio.to_thread(set_config, f"category_reg_channel_{event_id}", reg_target_channel.id)
                 await asyncio.to_thread(set_config, f"category_reg_msg_{event_id}", board_msg.id)
-                print(f"✅ Auto-deployed registration board in #registration: {board_msg.id}", flush=True)
+                print(f"✅ Auto-deployed registration board in {reg_target_channel.name}: {board_msg.id}", flush=True)
             except Exception as e:
-                print(f"⚠️ Failed to deploy registration board in #registration: {e}", flush=True)
+                print(f"⚠️ Failed to deploy registration board: {e}", flush=True)
 
             await asyncio.sleep(1.0)
 
