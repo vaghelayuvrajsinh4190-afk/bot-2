@@ -39,11 +39,14 @@ DEFAULT_CATEGORY_NAME = "📋 SCRIMS"
 # Team profile expiry
 PROFILE_EXPIRY_DAYS = 30  # 30-day memory for team profiles
 
+# Default scrim ID (backward compatibility)
+DEFAULT_SCRIM_ID = "SQ"
 
-def get_today_event_id(tier_name: str = None) -> str:
+
+def get_today_event_id(scrim_id: str = None) -> str:
     """
     Get today's event ID based on IST date.
-    If tier_name is provided, returns TIER_YYYY-MM-DD.
+    If scrim_id is provided, returns SCRIMID_YYYY-MM-DD.
     Otherwise returns just YYYY-MM-DD (legacy fallback).
     """
     import datetime
@@ -51,8 +54,8 @@ def get_today_event_id(tier_name: str = None) -> str:
     local_now = utc_now + datetime.timedelta(hours=TIMEZONE_OFFSET)
     date_str = local_now.strftime("%Y-%m-%d")
     
-    if tier_name:
-        return f"{tier_name.upper()}_{date_str}"
+    if scrim_id:
+        return f"{scrim_id.upper()}_{date_str}"
     return date_str
 
 # ═══════════════════ SCHEDULE LOADER ═══════════════════
@@ -60,9 +63,23 @@ def get_today_event_id(tier_name: str = None) -> str:
 SCHEDULE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "schedule.json")
 
 
-def load_schedule():
-    """Load the daily schedule from MongoDB (with fallback to schedule.json for migration)."""
-    # Try MongoDB first
+def load_schedule(scrim_id: str = None):
+    """
+    Load the daily schedule.
+    If scrim_id is provided, loads from the scrim's own schedule.
+    Otherwise falls back to global MongoDB config, then schedule.json.
+    """
+    # Try per-scrim schedule first
+    if scrim_id:
+        try:
+            from models.scrim import get_scrim_schedule
+            scrim_schedule = get_scrim_schedule(scrim_id)
+            if scrim_schedule:
+                return scrim_schedule
+        except Exception as e:
+            print(f"⚠️ Failed to load schedule for scrim {scrim_id}: {e}", flush=True)
+
+    # Try global MongoDB config
     try:
         from database import get_config
         db_schedule = get_config("schedule")
@@ -92,8 +109,21 @@ def load_schedule():
         return []
 
 
-def save_schedule(groups_data):
-    """Save updated schedule data to MongoDB (and local file as backup)."""
+def save_schedule(groups_data, scrim_id: str = None):
+    """
+    Save updated schedule data.
+    If scrim_id is provided, saves to the scrim's own schedule.
+    Otherwise saves to global MongoDB config.
+    """
+    if scrim_id:
+        try:
+            from models.scrim import set_scrim_schedule
+            set_scrim_schedule(scrim_id, groups_data)
+            return True
+        except Exception as e:
+            print(f"❌ Failed to save schedule for scrim {scrim_id}: {e}", flush=True)
+            return False
+
     try:
         from database import set_config
         set_config("schedule", groups_data)

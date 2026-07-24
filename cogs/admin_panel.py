@@ -1248,7 +1248,7 @@ class AdminPanelCog(commands.Cog):
         except Exception:
             db_status = "🔴 Disconnected / Error"
             
-        from config import get_today_event_id, MONGO_URI
+        from config import MONGO_URI
         masked_mongo_uri = "`Hidden / Masked`"
         if MONGO_URI:
             import re

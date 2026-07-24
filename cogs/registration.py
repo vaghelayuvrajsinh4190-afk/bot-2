@@ -79,9 +79,9 @@ class TeamInfoModal(ui.Modal, title="📋 Team Registration — Step 1/3"):
         required=False
     )
 
-    def __init__(self, prefill: dict = None, tier_name: str = None):
+    def __init__(self, prefill: dict = None, scrim_id: str = None):
         super().__init__()
-        self.tier_name = tier_name
+        self.scrim_id = scrim_id
         if prefill:
             self.team_name.default = prefill.get("team_name", "")
             self.owner_name.default = prefill.get("owner_name", "")
@@ -119,7 +119,7 @@ class TeamInfoModal(ui.Modal, title="📋 Team Registration — Step 1/3"):
             "email": self.email.value.strip(),
             "contact": self.contact.value.strip(),
             "is_edit": is_edit,
-            "tier_name": self.tier_name
+            "scrim_id": self.scrim_id
         }
 
         # Show Step 1 summary embed with button bridge
@@ -318,14 +318,14 @@ class PlayerDetailsModal(ui.Modal, title="🎮 Player Roster — Step 2/3"):
 class ConfirmRegistrationView(ui.View):
     """View with a button to finalize registration."""
 
-    def __init__(self, team_name, players, selected_members, player_uids=None, player_igns=None, tier_name=None):
+    def __init__(self, team_name, players, selected_members, player_uids=None, player_igns=None, scrim_id=None):
         super().__init__(timeout=120)
         self.team_name = team_name
         self.players = players
         self.selected_members = selected_members
         self.player_uids = player_uids or []
         self.player_igns = player_igns or []
-        self.tier_name = tier_name
+        self.scrim_id = scrim_id
 
     @ui.button(
         label="Confirm & Complete Registration",
@@ -334,10 +334,10 @@ class ConfirmRegistrationView(ui.View):
     )
     async def confirm_registration(self, interaction: discord.Interaction, button: ui.Button):
         owner_id = str(interaction.user.id)
-        event_id = get_today_event_id(self.tier_name)
+        event_id = get_today_event_id(self.scrim_id)
 
         # Check if banned asynchronously
-        is_ban, ban_doc = await asyncio.to_thread(punishment.is_banned, owner_id)
+        is_ban, ban_doc = await asyncio.to_thread(punishment.is_banned, owner_id, self.scrim_id)
         if is_ban:
             await interaction.response.send_message(
                 embed=error_embed("❌ Error", "You are banned and cannot register."),
@@ -365,7 +365,7 @@ class ConfirmRegistrationView(ui.View):
                 return
 
         # Check group availability asynchronously
-        available_groups = await asyncio.to_thread(group_model.get_open_groups, event_id)
+        available_groups = await asyncio.to_thread(group_model.get_open_groups, event_id, self.scrim_id or "SQ")
         if not available_groups:
             await interaction.response.send_message(
                 embed=error_embed("❌ All Groups Full", "All groups for today are completely full."),
@@ -376,7 +376,7 @@ class ConfirmRegistrationView(ui.View):
         await interaction.response.defer(ephemeral=True)
 
         # Atomic slot claim asynchronously
-        assigned_group = await asyncio.to_thread(group_model.claim_slot, event_id)
+        assigned_group = await asyncio.to_thread(group_model.claim_slot, event_id, self.scrim_id or "SQ")
         if not assigned_group:
             await interaction.followup.send(
                 embed=error_embed("❌ Claim Failed", "All groups filled up while processing your request."),
@@ -394,7 +394,8 @@ class ConfirmRegistrationView(ui.View):
             team_name=self.team_name,
             players=self.players,
             teammate_ids=teammate_ids,
-            slot_number=assigned_group["current_count"]
+            slot_number=assigned_group["current_count"],
+            scrim_id=self.scrim_id or "SQ"
         )
 
         # Save teammate IDs to profile asynchronously
@@ -482,12 +483,12 @@ class ConfirmRegistrationView(ui.View):
 class TeammateSelect(ui.UserSelect):
     """Dropdown to select 4 to 5 squad members."""
 
-    def __init__(self, team_name, players, player_uids=None, player_igns=None, tier_name=None):
+    def __init__(self, team_name, players, player_uids=None, player_igns=None, scrim_id=None):
         self.team_name = team_name
         self.players = players
         self.player_uids = player_uids or []
         self.player_igns = player_igns or []
-        self.tier_name = tier_name
+        self.scrim_id = scrim_id
         super().__init__(
             placeholder="Select your 4-5 teammates",
             min_values=4,
@@ -497,7 +498,7 @@ class TeammateSelect(ui.UserSelect):
     async def callback(self, interaction: discord.Interaction):
         members = self.values
         owner_id = str(interaction.user.id)
-        event_id = get_today_event_id(self.tier_name)
+        event_id = get_today_event_id(self.scrim_id)
 
         # Validation: must include yourself
         if interaction.user not in members:
@@ -541,7 +542,7 @@ class TeammateSelect(ui.UserSelect):
                 return
 
         # Check if groups are available asynchronously
-        available_groups = await asyncio.to_thread(group_model.get_open_groups, event_id)
+        available_groups = await asyncio.to_thread(group_model.get_open_groups, event_id, self.scrim_id or "SQ")
         if not available_groups:
             await interaction.response.send_message(
                 embed=error_embed(
@@ -557,7 +558,7 @@ class TeammateSelect(ui.UserSelect):
         # Send confirmation button response
         confirm_view = ConfirmRegistrationView(
             self.team_name, self.players, members,
-            self.player_uids, self.player_igns, self.tier_name
+            self.player_uids, self.player_igns, self.scrim_id
         )
         await interaction.response.send_message(
             content="Teammates selected. Click the button below to Finalize Registration.",
@@ -569,9 +570,9 @@ class TeammateSelect(ui.UserSelect):
 class TeammateSelectView(ui.View):
     """View containing the teammate select dropdown."""
 
-    def __init__(self, team_name, players, player_uids=None, player_igns=None, tier_name=None):
+    def __init__(self, team_name, players, player_uids=None, player_igns=None, scrim_id=None):
         super().__init__(timeout=120)
-        self.add_item(TeammateSelect(team_name, players, player_uids, player_igns, tier_name))
+        self.add_item(TeammateSelect(team_name, players, player_uids, player_igns, scrim_id))
 
 
 # ═══════════════════ SAVED PROFILE VIEWS ═══════════════════
@@ -579,10 +580,10 @@ class TeammateSelectView(ui.View):
 class SavedProfileView(ui.View):
     """Shown when a returning player has a saved team profile within 30 days."""
 
-    def __init__(self, profile, tier_name=None):
+    def __init__(self, profile, scrim_id=None):
         super().__init__(timeout=120)
         self.profile = profile
-        self.tier_name = tier_name
+        self.scrim_id = scrim_id
 
     @ui.button(label="Use Old Team", style=discord.ButtonStyle.secondary, emoji="📂", row=0)
     async def use_saved(self, interaction: discord.Interaction, button: ui.Button):
@@ -612,7 +613,7 @@ class SavedProfileView(ui.View):
         )
         await interaction.response.send_message(
             embed=embed,
-            view=TeammateSelectView(team_name, players, player_uids, player_igns, self.tier_name),
+            view=TeammateSelectView(team_name, players, player_uids, player_igns, self.scrim_id),
             ephemeral=True
         )
 
@@ -625,7 +626,7 @@ class SavedProfileView(ui.View):
             "email": self.profile.get("email", ""),
             "contact": self.profile.get("contact", ""),
         }
-        modal = TeamInfoModal(prefill=prefill, tier_name=self.tier_name)
+        modal = TeamInfoModal(prefill=prefill, scrim_id=self.scrim_id)
         modal._is_edit = True
         await interaction.response.send_modal(modal)
 
@@ -635,7 +636,7 @@ class SavedProfileView(ui.View):
         # Delete old profile asynchronously
         owner_id = str(interaction.user.id)
         await asyncio.to_thread(team_profile.delete_profile, owner_id)
-        await interaction.response.send_modal(TeamInfoModal(tier_name=self.tier_name))
+        await interaction.response.send_modal(TeamInfoModal(scrim_id=self.scrim_id))
 
 
 # ═══════════════════ PERSISTENT REGISTER BUTTON ═══════════════════
@@ -643,12 +644,14 @@ class SavedProfileView(ui.View):
 class PersistentRegisterView(ui.View):
     """The always-alive Register button posted in #register-here."""
 
-    def __init__(self, tier_name: str = None, locked=False):
+    def __init__(self, scrim_id: str = None, locked=False, tier_name: str = None):
         super().__init__(timeout=None)
-        self.tier_name = tier_name
+        # Support both scrim_id and legacy tier_name for backward compat
+        self.scrim_id = scrim_id or tier_name
+        self.tier_name = self.scrim_id  # Legacy alias
         self.clear_items()
         
-        suffix = f"_{tier_name}" if tier_name else ""
+        suffix = f"_{self.scrim_id}" if self.scrim_id else ""
 
         if locked:
             btn = ui.Button(
@@ -723,7 +726,7 @@ class PersistentRegisterView(ui.View):
 
     async def _reminder_callback(self, interaction: discord.Interaction):
         owner_id = str(interaction.user.id)
-        event_id = get_today_event_id(self.tier_name)
+        event_id = get_today_event_id(self.scrim_id)
         await interaction.response.defer(ephemeral=True)
 
         # Check if the user is registered today asynchronously
@@ -759,7 +762,7 @@ class PersistentRegisterView(ui.View):
 
     async def _register_callback(self, interaction: discord.Interaction):
         owner_id = str(interaction.user.id)
-        event_id = get_today_event_id(self.tier_name)
+        event_id = get_today_event_id(self.scrim_id)
 
         # Check registration open time dynamically and asynchronously
         is_open, open_h, open_m, current_t = await is_registration_open()
@@ -775,7 +778,7 @@ class PersistentRegisterView(ui.View):
             return
 
         # Check if banned asynchronously
-        is_ban, ban_doc = await asyncio.to_thread(punishment.is_banned, owner_id)
+        is_ban, ban_doc = await asyncio.to_thread(punishment.is_banned, owner_id, self.scrim_id)
         if is_ban:
             reason = ban_doc.get("reason", "No reason provided")
             exp = ban_doc.get("expires_at", "Unknown")
@@ -824,7 +827,7 @@ class PersistentRegisterView(ui.View):
             return
 
         # Check if groups are provisioned asynchronously
-        available = await asyncio.to_thread(group_model.get_open_groups, event_id)
+        available = await asyncio.to_thread(group_model.get_open_groups, event_id, self.scrim_id or "SQ")
         all_groups = await asyncio.to_thread(group_model.get_all_groups, event_id)
         if not all_groups:
             await interaction.response.send_message(
@@ -872,12 +875,12 @@ class PersistentRegisterView(ui.View):
             )
             await interaction.response.send_message(
                 embed=embed,
-                view=SavedProfileView(profile),
+                view=SavedProfileView(profile, scrim_id=self.scrim_id),
                 ephemeral=True
             )
         else:
             # Condition A: New user or expired — open Modal 1 immediately
-            await interaction.response.send_modal(TeamInfoModal(tier_name=self.tier_name))
+            await interaction.response.send_modal(TeamInfoModal(scrim_id=self.scrim_id))
 
 
 # ═══════════════════ COG ═══════════════════
@@ -893,14 +896,15 @@ class RegistrationCog(commands.Cog):
         self.bot.add_view(PersistentRegisterView(locked=False))
         self.bot.add_view(PersistentRegisterView(locked=True))
         try:
-            from cogs.scrims_reset import load_scrims
-            for scrim in load_scrims():
-                tier = scrim.get("name")
-                if tier:
-                    self.bot.add_view(PersistentRegisterView(tier_name=tier, locked=False))
-                    self.bot.add_view(PersistentRegisterView(tier_name=tier, locked=True))
+            from models.scrim import get_all_scrims
+            all_scrims = await asyncio.to_thread(get_all_scrims)
+            for scrim_doc in all_scrims:
+                sid = scrim_doc.get("scrim_id")
+                if sid:
+                    self.bot.add_view(PersistentRegisterView(scrim_id=sid, locked=False))
+                    self.bot.add_view(PersistentRegisterView(scrim_id=sid, locked=True))
         except Exception as e:
-            print(f"⚠️ Error loading tier views: {e}", flush=True)
+            print(f"⚠️ Error loading scrim views: {e}", flush=True)
 
     # ─────────────── /setup COMMAND ───────────────
 
@@ -913,7 +917,7 @@ class RegistrationCog(commands.Cog):
         tier="The scrim tier to set up (leave blank for legacy global)"
     )
     @app_commands.checks.has_permissions(administrator=True)
-    async def setup_cmd(self, interaction: discord.Interaction, channel: discord.TextChannel, tier: str = None):
+    async def setup_cmd(self, interaction: discord.Interaction, channel: discord.TextChannel, tier: str = None):  # tier kept for backward compat
         """Setup command: drops the permanent Slot Embed and Register buttons."""
         from database import set_config, set_channel_config
 
@@ -951,7 +955,7 @@ class RegistrationCog(commands.Cog):
         all_groups = group_model.get_all_groups(event_id)
         embed = build_registration_board_embed(all_groups)
 
-        view = PersistentRegisterView(tier_name=tier, locked=False)
+        view = PersistentRegisterView(scrim_id=tier, locked=False)
         msg = await channel.send(embed=embed, view=view)
 
         # Save the message ID and channel config
@@ -992,7 +996,7 @@ class RegistrationCog(commands.Cog):
             return
 
         # Check ban asynchronously
-        is_ban, _ = await asyncio.to_thread(punishment.is_banned, owner_id)
+        is_ban, _ = await asyncio.to_thread(punishment.is_banned, owner_id, tier)
         if is_ban:
             await interaction.response.send_message(
                 embed=error_embed("⛔ Banned", "You are banned from scrims."),
@@ -1019,11 +1023,11 @@ class RegistrationCog(commands.Cog):
             )
             await interaction.response.send_message(
                 embed=embed,
-                view=SavedProfileView(profile, tier_name=tier),
+                view=SavedProfileView(profile, scrim_id=tier),
                 ephemeral=True
             )
         else:
-            await interaction.response.send_modal(TeamInfoModal(tier_name=tier))
+            await interaction.response.send_modal(TeamInfoModal(scrim_id=tier))
 
     # ─────────────── /myteam COMMAND ───────────────
 

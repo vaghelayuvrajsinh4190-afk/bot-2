@@ -86,6 +86,35 @@ async def create_day_category(guild, category_name):
         return None
 
 
+async def create_positioned_category(guild, category_name, position=None, template_category=None, reason=None):
+    """
+    Create a category positioned in the channel list, optionally cloning permission overwrites from a template category.
+    """
+    overwrites = None
+    if template_category and hasattr(template_category, 'overwrites'):
+        overwrites = template_category.overwrites
+
+    kwargs = {"name": category_name}
+    if overwrites is not None:
+        kwargs["overwrites"] = overwrites
+    if position is not None:
+        kwargs["position"] = position
+    if reason:
+        kwargs["reason"] = reason
+
+    try:
+        category = await guild.create_category(**kwargs)
+        return category
+    except (discord.Forbidden, discord.HTTPException):
+        try:
+            category = await guild.create_category(name=category_name)
+            return category
+        except Exception:
+            return None
+    except Exception:
+        return None
+
+
 async def cleanup_channel(guild, channel_id):
     """Delete a channel by ID, ignoring errors if it's already gone."""
     try:

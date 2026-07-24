@@ -10,7 +10,7 @@ from database import registrations
 
 def create_registration(owner_id: str, event_id: str, group_id: str,
                         team_name: str, players: list, teammate_ids: list,
-                        slot_number: int = None):
+                        slot_number: int = None, scrim_id: str = "SQ"):
     """
     Insert a new registration.
     
@@ -22,8 +22,10 @@ def create_registration(owner_id: str, event_id: str, group_id: str,
         players: List of player in-game names
         teammate_ids: List of Discord user IDs of teammates
         slot_number: The roster slot number assigned to this team
+        scrim_id: Scrim identifier (default "SQ")
     """
     doc = {
+        "scrim_id": scrim_id,
         "owner_id": owner_id,
         "event_id": event_id,
         "group_id": group_id,

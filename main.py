@@ -10,7 +10,7 @@ import traceback
 import discord
 from discord.ext import commands
 from config import TOKEN, GUILD_ID, BOT_PREFIX
-from database import create_indexes
+from database import create_indexes, migrate_existing_data
 import keep_alive
 
 
@@ -84,6 +84,7 @@ class MackBot(commands.Bot):
             "cogs.help",
             "cogs.points",
             "cogs.scrims_reset",
+            "cogs.scrim_manager",
         ]
 
         for cog in cog_list:
@@ -230,8 +231,9 @@ if __name__ == "__main__":
 
     print("✅ TOKEN found", flush=True)
 
-    # Create database indexes
+    # Create database indexes & run migration
     create_indexes()
+    migrate_existing_data()
 
     # Start keep-alive web server
     print("🌐 Starting web server...", flush=True)

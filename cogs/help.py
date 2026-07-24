@@ -22,6 +22,7 @@ class HelpDropdown(ui.Select):
         if is_admin:
             options.extend([
                 discord.SelectOption(label="Setup & Provisioning", description="Initial setup & daily groups", emoji="⚙️", value="provision"),
+                discord.SelectOption(label="Scrim Manager", description="Create & configure dynamic scrim tiers", emoji="🏟️", value="scrims"),
                 discord.SelectOption(label="Admin Panel", description="Manage matches, bans, reminders", emoji="🔧", value="panel"),
                 discord.SelectOption(label="Autopilot", description="Midnight reset & registration timers", emoji="🤖", value="autopilot"),
                 discord.SelectOption(label="Announcements", description="Announce, room, DM broadcast", emoji="📢", value="announce"),
@@ -34,6 +35,7 @@ class HelpDropdown(ui.Select):
             "overview": self._overview,
             "register": self._register,
             "provision": self._provision,
+            "scrims": self._scrims,
             "panel": self._panel,
             "autopilot": self._autopilot,
             "announce": self._announce,
@@ -110,6 +112,27 @@ class HelpDropdown(ui.Select):
             f"  🕛 Midnight — Auto-cleanup + auto-provision\n"
             f"  🕙 10:00 AM — Registration unlocks\n\n{Theme.SEP}",
             Theme.ROSE, "📖 Provisioning"
+        )
+
+    def _scrims(self):
+        return make_embed(
+            "🏟️ Scrim Manager Guide",
+            f"{Theme.SEP}\n\n"
+            f"**Dynamic Multi-Scrim Management:**\n\n"
+            f"  `/scrim create` — Interactive modal to create a new scrim (e.g. T3, T2, T1)\n"
+            f"  `/scrim list` — Show all scrims with active/disabled/archived status\n"
+            f"  `/scrim info <id>` — View full details & settings for a scrim\n"
+            f"  `/scrim edit <id>` — Edit scrim name, color, capacity, description\n"
+            f"  `/scrim duplicate <source> <new_id> <name>` — Clone a scrim with full settings & schedule\n"
+            f"  `/scrim delete <id>` — Permanently remove a scrim (except protected SQ)\n"
+            f"  `/scrim archive <id>` — Archive a scrim (preserves all data, stops operations)\n"
+            f"  `/scrim enable/disable <id>` — Toggle scrim state\n"
+            f"  `/scrim modules <id>` — Turn specific features on/off per scrim\n"
+            f"  `/scrim settings <id>` — View or edit per-scrim settings\n"
+            f"  `/scrim channels <id>` — Assign custom channels per scrim\n"
+            f"  `/scrim schedule <id>` — View schedule for a scrim\n"
+            f"  `/scrim teams <id>` — List registered teams for a scrim\n\n{Theme.SEP}",
+            Theme.PREMIUM, "📖 Scrim Manager"
         )
 
     def _panel(self):

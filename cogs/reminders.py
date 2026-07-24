@@ -40,7 +40,9 @@ def parse_match_time(event_id: str, time_str: str) -> datetime.datetime:
     if not base_dt:
         raise ValueError(f"Could not parse time format for: '{time_str}'")
     
-    event_date = datetime.datetime.strptime(event_id, "%Y-%m-%d")
+    # Handle scrim-prefixed event IDs like 'SQ_2026-07-24'
+    date_part = event_id.split("_")[-1] if "_" in event_id else event_id
+    event_date = datetime.datetime.strptime(date_part, "%Y-%m-%d")
     dt = datetime.datetime(
         year=event_date.year,
         month=event_date.month,
@@ -437,14 +439,18 @@ class RemindersCog(commands.Cog):
     async def reminder_loop(self):
         """Check every minute for groups needing reminders or locking."""
         from config import get_today_event_id, GUILD_ID
-        from cogs.scrims_reset import load_scrims
+        from models.scrim import get_active_scrims
         
-        event_ids = [get_today_event_id()]
-        scrims = load_scrims()
-        for s in scrims:
-            tier_name = s.get("name")
-            if tier_name:
-                event_ids.append(get_today_event_id(tier_name))
+        # Build event IDs from all active scrims + legacy fallback
+        event_ids = [get_today_event_id()]  # legacy fallback
+        try:
+            active_scrims = await asyncio.to_thread(get_active_scrims)
+            for s in active_scrims:
+                sid = s.get("scrim_id")
+                if sid:
+                    event_ids.append(get_today_event_id(sid))
+        except Exception as e:
+            print(f"⚠️ Error loading scrims for reminders: {e}", flush=True)
         
         event_ids = list(set(event_ids))
         

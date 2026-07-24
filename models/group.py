@@ -11,12 +11,12 @@ from database import groups
 def create_group(event_id: str, group_id: str, capacity: int,
                  match1: dict, match2: dict,
                  channel_id: int, role_id: int, category_id: int,
-                 reserved_slots: int = 0):
+                 reserved_slots: int = 0, scrim_id: str = "SQ"):
     """
     Insert a new group document.
 
     Args:
-        event_id: Date-based event ID (e.g. "2026-06-20")
+        event_id: Date-based event ID (e.g. "2026-06-20" or "SQ_2026-06-20")
         group_id: Group identifier (e.g. "G0001")
         capacity: Max teams in this group (e.g. 21)
         match1: Dict with {idp, start, map} for match 1
@@ -25,8 +25,10 @@ def create_group(event_id: str, group_id: str, capacity: int,
         role_id: Discord role ID for this group
         category_id: Discord category ID this group belongs to
         reserved_slots: Number of reserved slots (default 0, set by provisioning)
+        scrim_id: Scrim identifier (default "SQ")
     """
     doc = {
+        "scrim_id": scrim_id,
         "event_id": event_id,
         "group_id": group_id,
         "capacity": capacity,
@@ -57,7 +59,7 @@ def create_group(event_id: str, group_id: str, capacity: int,
     )
     return doc
 
-def claim_slot(event_id: str):
+def claim_slot(event_id: str, scrim_id: str = "SQ"):
     """
     Atomically claim a slot in the lowest-numbered group with room.
     Uses findOneAndUpdate to prevent race conditions.
@@ -66,6 +68,7 @@ def claim_slot(event_id: str):
     """
     result = groups.find_one_and_update(
         {
+            "scrim_id": scrim_id,
             "event_id": event_id,
             "archived": {"$ne": True},
             "locked": {"$ne": True},
@@ -89,7 +92,7 @@ def release_slot(event_id: str, group_id: str):
     )
     return result
 
-def move_slot(event_id: str, from_group_id: str, to_group_id: str):
+def move_slot(event_id: str, from_group_id: str, to_group_id: str, scrim_id: str = "SQ"):
     """
     Atomically move a slot from one group to another.
     Returns (old_group_doc, new_group_doc) or (None, None) if target is full.
@@ -97,6 +100,7 @@ def move_slot(event_id: str, from_group_id: str, to_group_id: str):
     # First try to claim the target
     new_group = groups.find_one_and_update(
         {
+            "scrim_id": scrim_id,
             "event_id": event_id,
             "group_id": to_group_id,
             "archived": {"$ne": True},
@@ -117,26 +121,32 @@ def get_group(event_id: str, group_id: str):
     """Get a specific group document."""
     return groups.find_one({"event_id": event_id, "group_id": group_id})
 
-def get_all_groups(event_id: str, include_archived=False):
+def get_all_groups(event_id: str, include_archived=False, scrim_id: str = None):
     """Get all groups for an event, sorted by group_id."""
     query = {"event_id": event_id}
+    if scrim_id:
+        query["scrim_id"] = scrim_id
     if not include_archived:
         query["archived"] = {"$ne": True}
     return list(groups.find(query).sort("group_id", 1))
 
-def get_open_groups(event_id: str):
+def get_open_groups(event_id: str, scrim_id: str = "SQ"):
     """Get groups that still have room and aren't locked."""
     return list(groups.find({
+        "scrim_id": scrim_id,
         "event_id": event_id,
         "archived": {"$ne": True},
         "locked": {"$ne": True},
         "$expr": {"$lt": ["$current_count", "$capacity"]}
     }).sort("group_id", 1))
 
-def archive_groups(event_id: str):
+def archive_groups(event_id: str, scrim_id: str = None):
     """Mark all groups for an event as archived (nightly cleanup)."""
+    query = {"event_id": event_id}
+    if scrim_id:
+        query["scrim_id"] = scrim_id
     result = groups.update_many(
-        {"event_id": event_id},
+        query,
         {"$set": {"archived": True}}
     )
     return result.modified_count
@@ -213,15 +223,19 @@ def set_reserved_slots(event_id: str, group_id: str, count: int):
     )
 
 
-def set_all_reserved_slots(event_id: str, count: int):
+def set_all_reserved_slots(event_id: str, count: int, scrim_id: str = None):
     """
     Update reserved slot count for ALL non-archived groups in an event.
     Returns the number of groups updated.
     """
-    all_groups = list(groups.find({
+    query = {
         "event_id": event_id,
         "archived": {"$ne": True}
-    }))
+    }
+    if scrim_id:
+        query["scrim_id"] = scrim_id
+
+    all_groups = list(groups.find(query))
 
     updated = 0
     for group in all_groups:

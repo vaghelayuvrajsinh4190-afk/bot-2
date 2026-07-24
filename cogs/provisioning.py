@@ -31,7 +31,8 @@ from utils.embeds import (
 )
 from utils.permissions import (
     get_or_create_role, create_group_channel,
-    create_day_category, cleanup_channel, cleanup_role, cleanup_category
+    create_day_category, create_positioned_category,
+    cleanup_channel, cleanup_role, cleanup_category
 )
 from models import group as group_model, registration as reg_model, team_profile, punishment
 from database import get_config, set_config, get_channel_config, set_channel_config
@@ -211,19 +212,19 @@ class ProvisioningCog(commands.Cog):
 
     async def tier_reset(self, guild, config):
         """
-        Full reset cycle for a specific tier (called by ScrimsResetCog loop).
+        Full reset cycle for a specific scrim/tier (called by ScrimsResetCog loop).
         """
-        tier_name = config.get("name")
-        print(f"🕛 TIER RESET: Starting full reset cycle for tier '{tier_name}'...", flush=True)
+        scrim_id = config.get("name")
+        print(f"🕛 TIER RESET: Starting full reset cycle for scrim '{scrim_id}'...", flush=True)
 
         import datetime
         from config import get_today_event_id, DEFAULT_GROUP_COUNT, DEFAULT_GROUP_CAPACITY, TIMEZONE_OFFSET
         utc_now = datetime.datetime.utcnow()
         local_now = utc_now + datetime.timedelta(hours=TIMEZONE_OFFSET)
         
-        # Get yesterday's event ID for this tier
+        # Get yesterday's event ID for this scrim
         yesterday_date_str = (local_now - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
-        yesterday_event_id = f"{tier_name.upper()}_{yesterday_date_str}"
+        yesterday_event_id = f"{scrim_id.upper()}_{yesterday_date_str}"
         
         yesterday_groups = await asyncio.to_thread(group_model.get_all_groups, yesterday_event_id, True)
 
@@ -233,10 +234,10 @@ class ProvisioningCog(commands.Cog):
             print(f"🧹 Cleaned up {len(yesterday_groups)} groups from {yesterday_event_id}", flush=True)
 
         # ── Step 2: Auto-Provision New Day ──
-        event_id = get_today_event_id(tier_name)
+        event_id = get_today_event_id(scrim_id)
         count = int(config.get("group_count", DEFAULT_GROUP_COUNT))
         cap = int(config.get("capacity", DEFAULT_GROUP_CAPACITY))
-        category_name = config.get("daily_category", f"DAILY {tier_name.upper()} MATCHES")
+        category_name = config.get("daily_category", f"DAILY {scrim_id.upper()} MATCHES")
 
         # Create category using ScrimsResetCog logic if possible, or let auto_provision do it
         scrim_cog = self.bot.get_cog("ScrimsResetCog")
@@ -246,7 +247,7 @@ class ProvisioningCog(commands.Cog):
                 # Find the category we just created
                 cat = discord.utils.get(guild.categories, name=category_name)
                 if cat:
-                    await self._auto_provision(guild, event_id, count, cap, tier_name=tier_name, category_obj=cat)
+                    await self._auto_provision(guild, event_id, count, cap, scrim_id=scrim_id, category_obj=cat)
                     print(f"📦 Auto-provisioned {count} groups for {event_id} into {category_name}", flush=True)
                     return True
         return False
@@ -510,67 +511,96 @@ class ProvisioningCog(commands.Cog):
                 except Exception as e:
                     print(f"❌ Failed to deploy registration board message: {e}", flush=True)
 
-    async def _auto_provision(self, guild, event_id, count, capacity, category_name=None, tier_name=None, category_obj=None):
+    async def _auto_provision(self, guild, event_id, count, capacity, category_name=None, scrim_id=None, category_obj=None, tier_name=None):
         """
-        Automatically create groups, channels, roles using schedule.json.
+        Automatically create groups, channels, roles using schedule.
         Now with dynamic category naming, auto #registration channel,
         proper rate-limit pacing, and persistent button deployment.
+        Positions Group Categories directly below the Registration Category.
         """
+        # Support legacy tier_name parameter
+        scrim_id = scrim_id or tier_name or "SQ"
+
         # Ensure setup channels exist and are configured
         await self.ensure_setup_channels(guild, event_id)
-        schedule = load_schedule()
+        schedule = load_schedule(scrim_id)
 
-        # Use provided category name or configurable default (no date logic)
-        if not category_name:
-            category_name = await asyncio.to_thread(get_config, "default_category_name", DEFAULT_CATEGORY_NAME)
+        # Load scrim config from database
+        from models import scrim as scrim_model
+        scrim_doc = await asyncio.to_thread(scrim_model.get_scrim, scrim_id)
 
-        if category_obj:
-            category = category_obj
-        else:
-            category = await create_day_category(guild, category_name)
-            if not category:
-                print("❌ Failed to create day category.", flush=True)
-                return []
+        scrim_name = scrim_doc.get("name", f"{scrim_id.upper()} Scrims") if scrim_doc else f"{scrim_id.upper()} Scrims"
+        settings = scrim_doc.get("settings", {}) if scrim_doc else {}
 
-        await asyncio.to_thread(set_config, f"category_{event_id}", category.id)
+        # ── 1. LOCATE OR CREATE REGISTRATION CATEGORY ──
+        reg_cat_id = settings.get("registration_category_id")
+        reg_category = None
+        if reg_cat_id:
+            reg_category = guild.get_channel(int(reg_cat_id))
 
-        # ── AUTO-CREATE #registration CHANNEL INSIDE CATEGORY ──
+        if not reg_category:
+            reg_cat_name = settings.get("registration_category_name") or f"{scrim_id.upper()} Registration"
+            reg_category = discord.utils.get(guild.categories, name=reg_cat_name)
+            if not reg_category:
+                reg_category = await create_day_category(guild, reg_cat_name)
+
+        if not reg_category:
+            reg_category = category_obj or (await create_day_category(guild, category_name or DEFAULT_CATEGORY_NAME))
+
+        # Save Registration Category ID
+        if reg_category:
+            await asyncio.to_thread(set_config, f"category_{event_id}", reg_category.id)
+
+        # Live base position of Registration Category
+        base_pos = reg_category.position if reg_category else 0
+
+        # Permission template
+        template_cat_id = settings.get("permission_template_id")
+        template_cat = guild.get_channel(int(template_cat_id)) if template_cat_id else reg_category
+
+        # Naming format & starting index
+        naming_format = settings.get("group_naming_format", "{scrim_id} Group {number:02d}")
+        starting_num = settings.get("starting_number", 1)
+
+        # ── AUTO-CREATE #registration CHANNEL INSIDE REGISTRATION CATEGORY ──
         reg_in_category = None
-        try:
-            reg_in_category = await guild.create_text_channel(
-                name="registration",
-                category=category,
-                topic="📥 Register here for today's scrims!",
-                overwrites={
-                    guild.default_role: discord.PermissionOverwrite(
-                        send_messages=False,
-                        read_messages=True,
-                        read_message_history=True
-                    ),
-                    guild.me: discord.PermissionOverwrite(
-                        send_messages=True,
-                        embed_links=True,
-                        read_message_history=True,
-                        manage_messages=True
+        if reg_category:
+            try:
+                reg_in_category = discord.utils.get(reg_category.text_channels, name="registration")
+                if not reg_in_category:
+                    reg_in_category = await guild.create_text_channel(
+                        name="registration",
+                        category=reg_category,
+                        topic=f"📥 Register here for today's {scrim_name}!",
+                        overwrites={
+                            guild.default_role: discord.PermissionOverwrite(
+                                send_messages=False,
+                                read_messages=True,
+                                read_message_history=True
+                            ),
+                            guild.me: discord.PermissionOverwrite(
+                                send_messages=True,
+                                embed_links=True,
+                                read_message_history=True,
+                                manage_messages=True
+                            )
+                        }
                     )
-                }
-            )
-            print(f"✅ Created #registration channel in category '{category_name}'", flush=True)
-        except Exception as e:
-            print(f"⚠️ Failed to create #registration in category: {e}", flush=True)
+                    print(f"✅ Created #registration channel in category '{reg_category.name}'", flush=True)
+            except Exception as e:
+                print(f"⚠️ Failed to create #registration in category: {e}", flush=True)
 
-        await asyncio.sleep(1.5)  # Rate limit buffer after category + channel creation
+        await asyncio.sleep(1.0)
 
         # ── AUTO-DEPLOY REGISTRATION EMBED + PERSISTENT BUTTON ──
         if reg_in_category:
             try:
                 all_groups_current = await asyncio.to_thread(group_model.get_all_groups, event_id)
-                embed = build_registration_board_embed(all_groups_current)
+                embed = build_registration_board_embed(all_groups_current, event_name=scrim_name)
                 from cogs.registration import PersistentRegisterView
-                view = PersistentRegisterView(tier_name=tier_name, locked=False)
+                view = PersistentRegisterView(scrim_id=scrim_id, locked=False)
                 board_msg = await reg_in_category.send(embed=embed, view=view)
 
-                # Store references for live-updating
                 await asyncio.to_thread(set_config, f"category_reg_channel_{event_id}", reg_in_category.id)
                 await asyncio.to_thread(set_config, f"category_reg_msg_{event_id}", board_msg.id)
                 print(f"✅ Auto-deployed registration board in #registration: {board_msg.id}", flush=True)
@@ -579,42 +609,60 @@ class ProvisioningCog(commands.Cog):
 
             await asyncio.sleep(1.0)
 
-        # Get default reserved slots count
-        default_res = int(await asyncio.to_thread(get_config, "default_reserved_slots", DEFAULT_RESERVED_SLOTS))
+        default_res = int(settings.get("reserved_slots", DEFAULT_RESERVED_SLOTS))
 
-        # ── CREATE GROUPS WITH PROPER RATE-LIMIT PACING ──
+        # ── CREATE GROUP CATEGORIES & CHANNELS WITH AUTO-POSITIONING ──
         created_groups = []
         for i in range(1, count + 1):
             group_id = generate_group_id(i)
+            group_num = starting_num + i - 1
 
-            # Get schedule for this group number
+            # Format Group Category Name dynamically
+            try:
+                cat_name = naming_format.format(
+                    scrim_name=scrim_name,
+                    scrim_id=scrim_id.upper(),
+                    number=group_num
+                )
+            except Exception:
+                cat_name = f"{scrim_id.upper()} Group {group_num:02d}"
+
+            # Calculate position directly below Registration Category
+            target_pos = base_pos + i
+
+            # Create Group Category dynamically positioned directly below Registration Category
+            group_cat = await create_positioned_category(
+                guild=guild,
+                category_name=cat_name,
+                position=target_pos,
+                template_category=template_cat,
+                reason=f"[{scrim_id.upper()}] Group category for {group_id}"
+            )
+            if not group_cat:
+                group_cat = reg_category
+
+            # Get schedule for this group
             sched = None
             for s in schedule:
                 if s.get("group_number") == i:
                     sched = s
                     break
 
-            if sched:
-                match1 = sched.get("match1", {"idp": "TBD", "start": "TBD", "map": "TBD"})
-                match2 = sched.get("match2", {"idp": "TBD", "start": "TBD", "map": "TBD"})
-                shift = sched.get("shift", "")
-            else:
-                match1 = {"idp": "TBD", "start": "TBD", "map": "TBD"}
-                match2 = {"idp": "TBD", "start": "TBD", "map": "TBD"}
-                shift = ""
+            match1 = sched.get("match1", {"idp": "TBD", "start": "TBD", "map": "TBD"}) if sched else {"idp": "TBD", "start": "TBD", "map": "TBD"}
+            match2 = sched.get("match2", {"idp": "TBD", "start": "TBD", "map": "TBD"}) if sched else {"idp": "TBD", "start": "TBD", "map": "TBD"}
 
-            # Create role (API call 1)
-            role = await get_or_create_role(guild, group_id, discord.Color.blue())
+            # Create role
+            role = await get_or_create_role(guild, f"{scrim_id.upper()}-{group_id}", discord.Color.blue())
             if not role:
-                continue
-            await asyncio.sleep(0.5)  # Pace after role creation
+                role = await get_or_create_role(guild, group_id, discord.Color.blue())
+            await asyncio.sleep(0.5)
 
-            # Create channel (API call 2)
+            # Create channel inside the Group Category
             channel_name = f"group-{i}"
-            channel = await create_group_channel(guild, category, channel_name, role)
+            channel = await create_group_channel(guild, group_cat, channel_name, role)
             if not channel:
                 continue
-            await asyncio.sleep(0.5)  # Pace after channel creation
+            await asyncio.sleep(0.5)
 
             # Insert group doc
             group_doc = await asyncio.to_thread(
@@ -626,37 +674,32 @@ class ProvisioningCog(commands.Cog):
                 match2=match2,
                 channel_id=channel.id,
                 role_id=role.id,
-                category_id=category.id,
-                reserved_slots=default_res
+                category_id=group_cat.id,
+                reserved_slots=default_res,
+                scrim_id=scrim_id
             )
             created_groups.append(group_doc)
 
-            # Post initial roster embed in the group channel (API call 3)
+            # Post roster embed
             from models import registration as reg_model
             regs = await asyncio.to_thread(reg_model.get_group_registrations, group_id, event_id)
             roster_embed = build_roster_embed(group_doc, regs, capacity)
             msg = await channel.send(embed=roster_embed)
             await asyncio.to_thread(group_model.update_roster_message, event_id, group_id, msg.id)
+            await asyncio.sleep(0.5)
 
-            await asyncio.sleep(0.5)  # Pace after embed send
-
-            # Deploy Group Control Panel (API call 4)
+            # Deploy control panel
             from cogs.admin_panel import GroupControlPanelView
             panel_embed = build_group_control_panel_embed(group_doc)
             await channel.send(embed=panel_embed, view=GroupControlPanelView(event_id, group_id))
 
-            # ── RATE LIMIT SAFETY ──
-            # Base delay after each group's full creation cycle
+            # Rate limit pacing
             await asyncio.sleep(2.0)
-
-            # Extra breathing room every 3 groups to avoid gateway throttling
             if i % 3 == 0:
                 await asyncio.sleep(3.0)
 
-        # ── UPDATE REGISTRATION BOARDS WITH NEW GROUPS ──
+        # Update board
         all_groups = await asyncio.to_thread(group_model.get_all_groups, event_id)
-
-        # Update the permanent board in #register-here
         reg_channel_id = await asyncio.to_thread(get_channel_config, "register")
         if reg_channel_id:
             reg_channel = guild.get_channel(reg_channel_id)
@@ -664,18 +707,17 @@ class ProvisioningCog(commands.Cog):
                 slot_msg_id = await asyncio.to_thread(get_config, "slot_message_id")
                 if slot_msg_id:
                     try:
-                        embed = build_registration_board_embed(all_groups)
+                        embed = build_registration_board_embed(all_groups, event_name=scrim_name)
                         msg = await reg_channel.fetch_message(slot_msg_id)
                         await msg.edit(embed=embed)
                     except discord.NotFound:
                         pass
 
-        # Update the category-local board in #registration
         if reg_in_category:
             cat_reg_msg_id = await asyncio.to_thread(get_config, f"category_reg_msg_{event_id}")
             if cat_reg_msg_id:
                 try:
-                    embed = build_registration_board_embed(all_groups)
+                    embed = build_registration_board_embed(all_groups, event_name=scrim_name)
                     cat_msg = await reg_in_category.fetch_message(cat_reg_msg_id)
                     await cat_msg.edit(embed=embed)
                 except discord.NotFound:
@@ -751,7 +793,7 @@ class ProvisioningCog(commands.Cog):
 
         await interaction.response.defer()
 
-        created = await self._auto_provision(interaction.guild, event_id, count, cap, resolved_name, tier_name=tier)
+        created = await self._auto_provision(interaction.guild, event_id, count, cap, resolved_name, scrim_id=tier)
 
         embed = build_provision_summary_embed(
             event_id=event_id,

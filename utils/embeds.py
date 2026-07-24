@@ -119,7 +119,7 @@ def build_roster_embed(group_doc, registrations, capacity):
         f"> **Match 1:** `{m1_start}` ─ `{m1_map}`\n"
         f"> **Match 2:** `{m2_start}` ─ `{m2_map}`",
         color=color,
-        footer="🔄 Auto-updates │ SQ SCRIMS"
+        footer="🔄 Auto-updates │ Scrims"
     )
 
     # Add roster columns
@@ -254,7 +254,6 @@ def build_registration_board_embed(groups=None, event_name="Daily Scrims"):
 
     embed = make_embed(
         f"🏟️ {event_name} — Registration Board",
-        f"## ⚡ SQ SCRIMS ⚡\n\n"
         f"📊 **Slots Claimed:** `{total_filled}/{total_capacity}` │ "
         f"**Remaining:** `{slots_remaining}`\n"
         f"▓ **Overall Progress:**\n{overall_bar}\n\n"
@@ -265,7 +264,7 @@ def build_registration_board_embed(groups=None, event_name="Daily Scrims"):
         f"*Registration is first-come, first-served.*\n\n"
         f"{Theme.SEP}",
         Theme.PREMIUM,
-        "🔄 Auto-updates │ SQ SCRIMS"
+        "🔄 Auto-updates │ Dynamic Scrims"
     )
     return embed
 
@@ -382,6 +381,6 @@ def build_provision_summary_embed(event_id, created_count, capacity,
         f"**1** registration channel\n\n"
         f"{Theme.SEP}",
         Theme.SUCCESS,
-        f"Provisioned by {provisioned_by or 'Autopilot'} │ SQ SCRIMS"
+        f"Provisioned by {provisioned_by or 'Autopilot'} │ Scrim System"
     )
     return embed

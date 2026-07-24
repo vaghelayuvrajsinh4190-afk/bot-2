@@ -53,7 +53,7 @@ class AnnouncementsCog(commands.Cog):
         custom_message: str = None
     ):
         from models import group as group_model
-        from cogs.reminders import get_today_event_id
+        from config import get_today_event_id
 
         event_id = get_today_event_id()
         gid = group_id.upper()
