@@ -39,6 +39,22 @@ DEFAULT_CATEGORY_NAME = "📋 SCRIMS"
 # Team profile expiry
 PROFILE_EXPIRY_DAYS = 30  # 30-day memory for team profiles
 
+
+def get_today_event_id(tier_name: str = None) -> str:
+    """
+    Get today's event ID based on IST date.
+    If tier_name is provided, returns TIER_YYYY-MM-DD.
+    Otherwise returns just YYYY-MM-DD (legacy fallback).
+    """
+    import datetime
+    utc_now = datetime.datetime.utcnow()
+    local_now = utc_now + datetime.timedelta(hours=TIMEZONE_OFFSET)
+    date_str = local_now.strftime("%Y-%m-%d")
+    
+    if tier_name:
+        return f"{tier_name.upper()}_{date_str}"
+    return date_str
+
 # ═══════════════════ SCHEDULE LOADER ═══════════════════
 
 SCHEDULE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "schedule.json")

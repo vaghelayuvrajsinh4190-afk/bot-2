@@ -10,15 +10,10 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 
-from config import Theme, DEFAULT_POSITION_POINTS, get_rank_emoji, TIMEZONE_OFFSET
+from config import get_today_event_id, Theme, DEFAULT_POSITION_POINTS, get_rank_emoji, TIMEZONE_OFFSET
 from database import get_config, set_config, get_channel_config, match_results as results_collection
 from utils.embeds import make_embed, error_embed, success_embed
 
-
-def get_today_event_id():
-    utc_now = datetime.datetime.utcnow()
-    local_now = utc_now + datetime.timedelta(hours=TIMEZONE_OFFSET)
-    return local_now.strftime("%Y-%m-%d")
 
 
 class PointsCog(commands.Cog):
@@ -108,7 +103,8 @@ class PointsCog(commands.Cog):
         match_number="Match number (1 or 2)",
         team_name="Registered team name",
         kills="Number of kills",
-        position="Placement position (1 to 16)"
+        position="Placement position (1 to 16)",
+        tier="Tier name (leave blank for legacy)"
     )
     @app_commands.checks.has_permissions(administrator=True)
     async def add_result(
@@ -118,7 +114,8 @@ class PointsCog(commands.Cog):
         match_number: int,
         team_name: str,
         kills: int,
-        position: int
+        position: int,
+        tier: str = None
     ):
         if match_number not in (1, 2):
             await interaction.response.send_message(
@@ -139,7 +136,7 @@ class PointsCog(commands.Cog):
             )
             return
 
-        event_id = get_today_event_id()
+        event_id = get_today_event_id(tier)
         gid = group_id.upper()
 
         # Check if group exists for today asynchronously
@@ -220,8 +217,12 @@ class PointsCog(commands.Cog):
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @app_commands.command(name="matchresults", description="Display scores for a specific group match")
-    @app_commands.describe(group_id="Group ID (e.g. G0001)", match_number="Match number (1 or 2)")
-    async def match_results(self, interaction: discord.Interaction, group_id: str, match_number: int):
+    @app_commands.describe(
+        group_id="Group ID (e.g. G0001)",
+        match_number="Match number (1 or 2)",
+        tier="Tier name (leave blank for legacy)"
+    )
+    async def match_results(self, interaction: discord.Interaction, group_id: str, match_number: int, tier: str = None):
         if match_number not in (1, 2):
             await interaction.response.send_message(
                 embed=error_embed("❌ Invalid Match", "Match number must be 1 or 2."),
@@ -229,7 +230,7 @@ class PointsCog(commands.Cog):
             )
             return
 
-        event_id = get_today_event_id()
+        event_id = get_today_event_id(tier)
         gid = group_id.upper()
 
         # Fetch results asynchronously
@@ -269,9 +270,9 @@ class PointsCog(commands.Cog):
     # ─────────────── STANDINGS & LEADERBOARD ───────────────
 
     @app_commands.command(name="leaderboard", description="View overall standings for today's event or a past day")
-    @app_commands.describe(event_id="Date of event (YYYY-MM-DD), defaults to today")
-    async def leaderboard(self, interaction: discord.Interaction, event_id: str = None):
-        target_event = event_id or get_today_event_id()
+    @app_commands.describe(tier="Tier name (leave blank for legacy global tier)")
+    async def leaderboard(self, interaction: discord.Interaction, tier: str = None):
+        target_event = get_today_event_id(tier)
 
         # Fetch results asynchronously
         query_cursor = results_collection.find({"event_id": target_event})
@@ -346,9 +347,12 @@ class PointsCog(commands.Cog):
         await interaction.response.send_message(embed=embed)
 
     @app_commands.command(name="mvp", description="Show top players/teams with the highest kills")
-    @app_commands.describe(group_id="Optional Group ID (e.g. G0001)")
-    async def mvp(self, interaction: discord.Interaction, group_id: str = None):
-        event_id = get_today_event_id()
+    @app_commands.describe(
+        group_id="Optional Group ID (e.g. G0001)",
+        tier="Tier name (leave blank for legacy)"
+    )
+    async def mvp(self, interaction: discord.Interaction, group_id: str = None, tier: str = None):
+        event_id = get_today_event_id(tier)
         query = {"event_id": event_id}
         if group_id:
             query["group_id"] = group_id.upper()
@@ -405,9 +409,13 @@ class PointsCog(commands.Cog):
     # ─────────────── RESET COMMANDS ───────────────
 
     @app_commands.command(name="resetresults", description="[Admin] Reset scores for a specific group match")
-    @app_commands.describe(group_id="Group ID (e.g. G0001)", match_number="Match number (1 or 2)")
+    @app_commands.describe(
+        group_id="Group ID (e.g. G0001)",
+        match_number="Match number (1 or 2)",
+        tier="Tier name (leave blank for legacy)"
+    )
     @app_commands.checks.has_permissions(administrator=True)
-    async def reset_results(self, interaction: discord.Interaction, group_id: str, match_number: int):
+    async def reset_results(self, interaction: discord.Interaction, group_id: str, match_number: int, tier: str = None):
         if match_number not in (1, 2):
             await interaction.response.send_message(
                 embed=error_embed("❌ Invalid Match", "Match number must be 1 or 2."),
@@ -415,7 +423,7 @@ class PointsCog(commands.Cog):
             )
             return
 
-        event_id = get_today_event_id()
+        event_id = get_today_event_id(tier)
         gid = group_id.upper()
 
         deleted = await asyncio.to_thread(
@@ -435,9 +443,10 @@ class PointsCog(commands.Cog):
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @app_commands.command(name="resetallresults", description="[Admin] Wipe all match results for today's event")
+    @app_commands.describe(tier="Tier name (leave blank for legacy)")
     @app_commands.checks.has_permissions(administrator=True)
-    async def reset_all_results(self, interaction: discord.Interaction):
-        event_id = get_today_event_id()
+    async def reset_all_results(self, interaction: discord.Interaction, tier: str = None):
+        event_id = get_today_event_id(tier)
 
         deleted = await asyncio.to_thread(results_collection.delete_many, {"event_id": event_id})
 
@@ -452,10 +461,13 @@ class PointsCog(commands.Cog):
     # ─────────────── POST STANDINGS ───────────────
 
     @app_commands.command(name="postleaderboard", description="[Admin] Publish the standings to a specific channel")
-    @app_commands.describe(channel="Target channel to post the leaderboard")
+    @app_commands.describe(
+        channel="The channel to post the leaderboard in",
+        tier="Tier name (leave blank for legacy)"
+    )
     @app_commands.checks.has_permissions(administrator=True)
-    async def post_leaderboard(self, interaction: discord.Interaction, channel: discord.TextChannel):
-        event_id = get_today_event_id()
+    async def post_leaderboard(self, interaction: discord.Interaction, channel: discord.TextChannel, tier: str = None):
+        event_id = get_today_event_id(tier)
 
         query_cursor = results_collection.find({"event_id": event_id})
         results = await asyncio.to_thread(list, query_cursor)

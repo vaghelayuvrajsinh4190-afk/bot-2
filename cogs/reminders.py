@@ -10,7 +10,7 @@ import discord
 from discord.ext import commands, tasks
 from discord import app_commands, ui
 
-from config import Theme, TIMEZONE_OFFSET, DEFAULT_REMINDER_LEAD_MINUTES, DEFAULT_LOCK_MINUTES
+from config import get_today_event_id, Theme, TIMEZONE_OFFSET, DEFAULT_REMINDER_LEAD_MINUTES, DEFAULT_LOCK_MINUTES
 from utils.embeds import make_embed, error_embed, success_embed, build_roster_embed
 from utils.permissions import grant_group_access, revoke_group_access
 from utils.updater import update_group_roster, update_registration_board
@@ -19,11 +19,6 @@ from database import get_config, get_channel_config
 
 
 # ═══════════════════ HELPERS ═══════════════════
-
-def get_today_event_id():
-    utc_now = datetime.datetime.utcnow()
-    local_now = utc_now + datetime.timedelta(hours=TIMEZONE_OFFSET)
-    return local_now.strftime("%Y-%m-%d")
 
 
 def parse_match_time(event_id: str, time_str: str) -> datetime.datetime:
@@ -441,12 +436,26 @@ class RemindersCog(commands.Cog):
     @tasks.loop(minutes=1)
     async def reminder_loop(self):
         """Check every minute for groups needing reminders or locking."""
-        event_id = get_today_event_id()
-        all_groups = await asyncio.to_thread(group_model.get_all_groups, event_id)
+        from config import get_today_event_id, GUILD_ID
+        from cogs.scrims_reset import load_scrims
+        
+        event_ids = [get_today_event_id()]
+        scrims = load_scrims()
+        for s in scrims:
+            tier_name = s.get("name")
+            if tier_name:
+                event_ids.append(get_today_event_id(tier_name))
+        
+        event_ids = list(set(event_ids))
+        
+        all_groups = []
+        for e_id in event_ids:
+            groups = await asyncio.to_thread(group_model.get_all_groups, e_id)
+            if groups:
+                all_groups.extend(groups)
+                
         if not all_groups:
             return
-
-        from config import GUILD_ID
         guild = None
         if GUILD_ID:
             guild = self.bot.get_guild(int(GUILD_ID))
@@ -467,24 +476,24 @@ class RemindersCog(commands.Cog):
             m1_start = g.get("match1", {}).get("start")
             if m1_start and m1_start != "TBD":
                 try:
-                    m1_dt = parse_match_time(event_id, m1_start)
+                    m1_dt = parse_match_time(g["event_id"], m1_start)
                     time_diff = m1_dt - local_now
                     diff_minutes = time_diff.total_seconds() / 60
 
                     # Match reminder
                     if 0 <= diff_minutes <= reminder_lead_min and not g.get("reminder_sent", False):
-                        await self.send_reminder_embed(guild, event_id, g)
-                        print(f"⏰ Auto-reminder sent for group {g['group_id']}", flush=True)
+                        await self.send_reminder_embed(guild, g["event_id"], g)
+                        print(f"⏰ Auto-reminder sent for group {g['group_id']} ({g['event_id']})", flush=True)
 
                     # Group locking
                     if 0 <= diff_minutes <= lock_min and not g.get("locked", False):
-                        await asyncio.to_thread(group_model.lock_group, event_id, g["group_id"])
+                        await asyncio.to_thread(group_model.lock_group, g["event_id"], g["group_id"])
                         channel = guild.get_channel(g.get("channel_id"))
                         if channel:
-                            regs = await asyncio.to_thread(reg_model.get_group_registrations, g["group_id"], event_id)
+                            regs = await asyncio.to_thread(reg_model.get_group_registrations, g["group_id"], g["event_id"])
                             slot_embed = build_slot_list_embed(g, regs)
                             await channel.send(embed=slot_embed)
-                            await asyncio.to_thread(group_model.set_slot_list_published, event_id, g["group_id"])
+                            await asyncio.to_thread(group_model.set_slot_list_published, g["event_id"], g["group_id"])
                             print(f"🔒 Auto-locked group {g['group_id']} and published slot list", flush=True)
 
                 except Exception as e:

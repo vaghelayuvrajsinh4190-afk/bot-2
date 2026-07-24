@@ -83,6 +83,7 @@ class MackBot(commands.Bot):
             "cogs.announcements",
             "cogs.help",
             "cogs.points",
+            "cogs.scrims_reset",
         ]
 
         for cog in cog_list:

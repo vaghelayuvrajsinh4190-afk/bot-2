@@ -15,7 +15,7 @@ import discord
 from discord.ext import commands, tasks
 from discord import app_commands
 
-from config import (
+from config import get_today_event_id, (
     Theme, TIMEZONE_OFFSET,
     DEFAULT_GROUP_CAPACITY, DEFAULT_GROUP_COUNT,
     DEFAULT_CATEGORY_NAME, DEFAULT_RESERVED_SLOTS,
@@ -39,11 +39,6 @@ from utils.updater import update_registration_board
 
 
 # ═══════════════════ HELPERS ═══════════════════
-
-def get_today_event_id():
-    utc_now = datetime.datetime.utcnow()
-    local_now = utc_now + datetime.timedelta(hours=TIMEZONE_OFFSET)
-    return local_now.strftime("%Y-%m-%d")
 
 
 def get_today_display():
@@ -212,6 +207,48 @@ class ProvisioningCog(commands.Cog):
                 )
 
         print("✅ Midnight reset complete.", flush=True)
+
+    async def tier_reset(self, guild, config):
+        """
+        Full reset cycle for a specific tier (called by ScrimsResetCog loop).
+        """
+        tier_name = config.get("name")
+        print(f"🕛 TIER RESET: Starting full reset cycle for tier '{tier_name}'...", flush=True)
+
+        import datetime
+        from config import get_today_event_id, DEFAULT_GROUP_COUNT, DEFAULT_GROUP_CAPACITY, TIMEZONE_OFFSET
+        utc_now = datetime.datetime.utcnow()
+        local_now = utc_now + datetime.timedelta(hours=TIMEZONE_OFFSET)
+        
+        # Get yesterday's event ID for this tier
+        yesterday_date_str = (local_now - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
+        yesterday_event_id = f"{tier_name.upper()}_{yesterday_date_str}"
+        
+        yesterday_groups = await asyncio.to_thread(group_model.get_all_groups, yesterday_event_id, True)
+
+        # ── Step 1: Channel Cleanup ──
+        if yesterday_groups:
+            await self._cleanup_event(guild, yesterday_event_id, yesterday_groups)
+            print(f"🧹 Cleaned up {len(yesterday_groups)} groups from {yesterday_event_id}", flush=True)
+
+        # ── Step 2: Auto-Provision New Day ──
+        event_id = get_today_event_id(tier_name)
+        count = int(config.get("group_count", DEFAULT_GROUP_COUNT))
+        cap = int(config.get("capacity", DEFAULT_GROUP_CAPACITY))
+        category_name = config.get("daily_category", f"DAILY {tier_name.upper()} MATCHES")
+
+        # Create category using ScrimsResetCog logic if possible, or let auto_provision do it
+        scrim_cog = self.bot.get_cog("ScrimsResetCog")
+        if scrim_cog:
+            category_created = await scrim_cog.reset_scrim(guild, config)
+            if category_created:
+                # Find the category we just created
+                cat = discord.utils.get(guild.categories, name=category_name)
+                if cat:
+                    await self._auto_provision(guild, event_id, count, cap, tier_name=tier_name, category_obj=cat)
+                    print(f"📦 Auto-provisioned {count} groups for {event_id} into {category_name}", flush=True)
+                    return True
+        return False
 
     # ═══════════════════ REGISTRATION OPEN ═══════════════════
 
@@ -472,7 +509,7 @@ class ProvisioningCog(commands.Cog):
                 except Exception as e:
                     print(f"❌ Failed to deploy registration board message: {e}", flush=True)
 
-    async def _auto_provision(self, guild, event_id, count, capacity, category_name=None):
+    async def _auto_provision(self, guild, event_id, count, capacity, category_name=None, tier_name=None, category_obj=None):
         """
         Automatically create groups, channels, roles using schedule.json.
         Now with dynamic category naming, auto #registration channel,
@@ -486,11 +523,13 @@ class ProvisioningCog(commands.Cog):
         if not category_name:
             category_name = await asyncio.to_thread(get_config, "default_category_name", DEFAULT_CATEGORY_NAME)
 
-        # Create category
-        category = await create_day_category(guild, category_name)
-        if not category:
-            print("❌ Failed to create day category.", flush=True)
-            return []
+        if category_obj:
+            category = category_obj
+        else:
+            category = await create_day_category(guild, category_name)
+            if not category:
+                print("❌ Failed to create day category.", flush=True)
+                return []
 
         await asyncio.to_thread(set_config, f"category_{event_id}", category.id)
 
@@ -527,7 +566,7 @@ class ProvisioningCog(commands.Cog):
                 all_groups_current = await asyncio.to_thread(group_model.get_all_groups, event_id)
                 embed = build_registration_board_embed(all_groups_current)
                 from cogs.registration import PersistentRegisterView
-                view = PersistentRegisterView(locked=False)
+                view = PersistentRegisterView(tier_name=tier_name, locked=False)
                 board_msg = await reg_in_category.send(embed=embed, view=view)
 
                 # Store references for live-updating
@@ -653,7 +692,8 @@ class ProvisioningCog(commands.Cog):
         group_count="Number of groups to create (default: from config or 12)",
         capacity="Max teams per group (default: from config or 21)",
         category_name="Custom category name (e.g. 'Qualifiers Day 3')",
-        force="Force re-provision (auto-deprovision existing groups first)"
+        force="Force re-provision (auto-deprovision existing groups first)",
+        tier="The tier to provision (leave blank for legacy global)"
     )
     @app_commands.checks.has_permissions(administrator=True)
     async def provision(
@@ -662,9 +702,10 @@ class ProvisioningCog(commands.Cog):
         group_count: int = None,
         capacity: int = None,
         category_name: str = None,
-        force: bool = False
+        force: bool = False,
+        tier: str = None
     ):
-        event_id = get_today_event_id()
+        event_id = get_today_event_id(tier)
 
         # Check if already provisioned
         existing = await asyncio.to_thread(group_model.get_all_groups, event_id, True)
@@ -709,7 +750,7 @@ class ProvisioningCog(commands.Cog):
 
         await interaction.response.defer()
 
-        created = await self._auto_provision(interaction.guild, event_id, count, cap, resolved_name)
+        created = await self._auto_provision(interaction.guild, event_id, count, cap, resolved_name, tier_name=tier)
 
         embed = build_provision_summary_embed(
             event_id=event_id,
@@ -728,11 +769,12 @@ class ProvisioningCog(commands.Cog):
     )
     @app_commands.describe(
         count="Number of additional groups to create",
-        capacity="Max teams per group (uses today's config if omitted)"
+        capacity="Max teams per group (uses today's config if omitted)",
+        tier="The tier to add groups to (leave blank for legacy global)"
     )
     @app_commands.checks.has_permissions(administrator=True)
-    async def add_groups(self, interaction: discord.Interaction, count: int = 1, capacity: int = None):
-        event_id = get_today_event_id()
+    async def add_groups(self, interaction: discord.Interaction, count: int = 1, capacity: int = None, tier: str = None):
+        event_id = get_today_event_id(tier)
         existing = await asyncio.to_thread(group_model.get_all_groups, event_id)
 
         if not existing:

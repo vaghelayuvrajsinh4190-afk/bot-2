@@ -13,7 +13,7 @@ import discord
 from discord.ext import commands
 from discord import app_commands, ui
 
-from config import Theme, TIMEZONE_OFFSET, DEFAULT_LOCK_MINUTES, get_rank_emoji, DEFAULT_RESERVED_SLOTS
+from config import get_today_event_id, Theme, TIMEZONE_OFFSET, DEFAULT_LOCK_MINUTES, get_rank_emoji, DEFAULT_RESERVED_SLOTS
 from utils.embeds import make_embed, error_embed, success_embed, build_roster_embed
 from utils.permissions import grant_group_access, revoke_group_access
 from models import group as group_model, registration as reg_model, punishment
@@ -22,11 +22,6 @@ from utils.updater import update_group_roster, update_registration_board
 
 
 # ═══════════════════ HELPERS ═══════════════════
-
-def get_today_event_id():
-    utc_now = datetime.datetime.utcnow()
-    local_now = utc_now + datetime.timedelta(hours=TIMEZONE_OFFSET)
-    return local_now.strftime("%Y-%m-%d")
 
 
 def is_admin(member: discord.Member) -> bool:
@@ -284,8 +279,10 @@ class GroupControlPanelView(ui.View):
             )
             return
 
-        event_id = self.event_id or get_today_event_id()
-        group_id = self._resolve_group_id(interaction)
+        event_id, group_id = self._resolve_context(interaction)
+        if not event_id or not group_id:
+            await interaction.response.send_message(embed=error_embed("❌ Error", "Group context lost."), ephemeral=True)
+            return
 
         cog = interaction.client.get_cog("RemindersCog")
         if cog and group_id:
@@ -306,8 +303,10 @@ class GroupControlPanelView(ui.View):
             )
             return
 
-        event_id = self.event_id or get_today_event_id()
-        group_id = self._resolve_group_id(interaction)
+        event_id, group_id = self._resolve_context(interaction)
+        if not event_id or not group_id:
+            await interaction.response.send_message(embed=error_embed("❌ Error", "Group context lost."), ephemeral=True)
+            return
 
         cog = interaction.client.get_cog("RemindersCog")
         if cog and group_id:
@@ -327,8 +326,10 @@ class GroupControlPanelView(ui.View):
         For teams: shows Cancel Slot / Change Schedule
         For admins: shows Edit Match / Move Team
         """
-        event_id = self.event_id or get_today_event_id()
-        group_id = self._resolve_group_id(interaction)
+        event_id, group_id = self._resolve_context(interaction)
+        if not event_id or not group_id:
+            await interaction.response.send_message(embed=error_embed("❌ Error", "Group context lost."), ephemeral=True)
+            return
 
         if is_admin(interaction.user):
             # Admin sub-menu
@@ -390,7 +391,10 @@ class GroupControlPanelView(ui.View):
             )
             return
 
-        event_id = self.event_id or get_today_event_id()
+        event_id, _ = self._resolve_context(interaction)
+        if not event_id:
+            from config import get_today_event_id
+            event_id = get_today_event_id()
         from database import match_results as results_collection
         results = list(results_collection.find({"event_id": event_id}))
 
@@ -433,20 +437,19 @@ class GroupControlPanelView(ui.View):
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    def _resolve_group_id(self, interaction):
-        """Try to resolve the group_id from stored value or channel context."""
-        if self.group_id:
-            return self.group_id
+    def _resolve_context(self, interaction):
+        """Resolve the true event_id and group_id from the channel context dynamically."""
+        if self.event_id and self.group_id:
+            return self.event_id, self.group_id
 
-        # Try to find group by channel_id
-        event_id = self.event_id or get_today_event_id()
         from database import groups as groups_collection
         doc = groups_collection.find_one({
-            "event_id": event_id,
             "channel_id": interaction.channel.id,
             "archived": {"$ne": True}
         })
-        return doc["group_id"] if doc else None
+        if doc:
+            return doc.get("event_id"), doc.get("group_id")
+        return None, None
 
 
 # ═══════════════════ ADMIN MANAGE SUB-VIEW ═══════════════════
@@ -959,7 +962,7 @@ class AdminPanelCog(commands.Cog):
 
         # Load values directly from config files, db, or runtime settings
         import config
-        from config import (
+        from config import get_today_event_id, (
             DEFAULT_GROUP_CAPACITY, DEFAULT_GROUP_COUNT, DEFAULT_RESERVED_SLOTS,
             DEFAULT_CATEGORY_NAME, TIMEZONE_OFFSET, REGISTRATION_OPEN_HOUR, REGISTRATION_OPEN_MINUTE,
             DEFAULT_LOCK_MINUTES, DEFAULT_REMINDER_LEAD_MINUTES, load_schedule
@@ -1243,7 +1246,7 @@ class AdminPanelCog(commands.Cog):
         except Exception:
             db_status = "🔴 Disconnected / Error"
             
-        from config import MONGO_URI
+        from config import get_today_event_id, MONGO_URI
         masked_mongo_uri = "`Hidden / Masked`"
         if MONGO_URI:
             import re
