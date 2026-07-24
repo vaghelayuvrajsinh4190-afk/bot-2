@@ -948,14 +948,77 @@ class AdminPanelCog(commands.Cog):
 
     # ─────────────── VIEW CONFIG ───────────────
 
+    @staticmethod
+    def paginate_logical_page(title: str, description_lines: list, fields: list, color: discord.Color) -> list:
+        """
+        Split a logical configuration page into one or more embeds to guarantee
+        they never exceed Discord's limits.
+        """
+        embeds = []
+        
+        # 1. Paginate by description if description is very long
+        desc_chunks = []
+        current_desc = []
+        current_len = 0
+        for line in description_lines:
+            line_len = len(line) + 1
+            if current_len + line_len > 3800:
+                desc_chunks.append("\n".join(current_desc))
+                current_desc = [line]
+                current_len = line_len
+            else:
+                current_desc.append(line)
+                current_len += line_len
+        if current_desc:
+            desc_chunks.append("\n".join(current_desc))
+            
+        if not desc_chunks:
+            desc_chunks = [""]
+
+        # 2. Paginate fields
+        field_chunks = []
+        current_fields = []
+        field_char_count = 0
+        for f_name, f_val, f_inline in fields:
+            f_len = len(f_name) + len(f_val)
+            if len(current_fields) >= 20 or field_char_count + f_len > 4000:
+                field_chunks.append(current_fields)
+                current_fields = [(f_name, f_val, f_inline)]
+                field_char_count = f_len
+            else:
+                current_fields.append((f_name, f_val, f_inline))
+                field_char_count += f_len
+        if current_fields:
+            field_chunks.append(current_fields)
+            
+        if not field_chunks:
+            field_chunks = [[]]
+
+        max_subpages = max(len(desc_chunks), len(field_chunks))
+        for i in range(max_subpages):
+            d_text = desc_chunks[i] if i < len(desc_chunks) else ""
+            f_list = field_chunks[i] if i < len(field_chunks) else []
+            
+            subpage_title = title
+            if max_subpages > 1:
+                subpage_title = f"{title} (Part {i+1}/{max_subpages})"
+                
+            emb = make_embed(title=subpage_title, desc=d_text, color=color)
+            for f_name, f_val, f_inline in f_list:
+                if len(f_val) > 1024:
+                    val_chunks = [f_val[k:k+1000] for k in range(0, len(f_val), 1000)]
+                    for idx, vc in enumerate(val_chunks):
+                        emb.add_field(name=f"{f_name} (Part {idx+1})" if len(val_chunks) > 1 else f_name, value=vc, inline=f_inline)
+                else:
+                    emb.add_field(name=f_name, value=f_val, inline=f_inline)
+            embeds.append(emb)
+            
+        return embeds
+
     @app_commands.command(name="viewconfig", description="[Admin] View all bot configuration")
     @app_commands.checks.has_permissions(administrator=True)
     async def view_config(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
-
-        event_id = get_today_event_id()
-        guild = interaction.guild
-        bot = interaction.client
 
         # Retrieve MongoDB client and config collection
         from database import bot_config as config_collection, _client
@@ -967,225 +1030,189 @@ class AdminPanelCog(commands.Cog):
         from config import (
             DEFAULT_GROUP_CAPACITY, DEFAULT_GROUP_COUNT, DEFAULT_RESERVED_SLOTS,
             DEFAULT_CATEGORY_NAME, TIMEZONE_OFFSET, REGISTRATION_OPEN_HOUR, REGISTRATION_OPEN_MINUTE,
-            DEFAULT_LOCK_MINUTES, DEFAULT_REMINDER_LEAD_MINUTES, load_schedule
+            DEFAULT_LOCK_MINUTES, DEFAULT_REMINDER_LEAD_MINUTES, load_schedule, get_today_event_id
         )
         from cogs.registration import is_registration_open
+        from models import group as group_model, registration as reg_model
+        from models.scrim import get_all_scrims
+        import inspect
 
-        # Local helper to safely add a split field (protects against >1024 char limits)
-        def add_split_field(embed, name, value, inline=False):
-            if len(value) <= 1000:
-                embed.add_field(name=name, value=value, inline=inline)
-                return
-            lines = value.split("\n")
-            current_chunk = []
-            chunk_idx = 1
-            for line in lines:
-                if len("\n".join(current_chunk) + "\n" + line) > 1000:
-                    embed.add_field(
-                        name=f"{name} (Part {chunk_idx})" if chunk_idx > 1 or len(lines) > 1 else name,
-                        value="\n".join(current_chunk),
-                        inline=inline
-                    )
-                    current_chunk = [line]
-                    chunk_idx += 1
-                else:
-                    current_chunk.append(line)
-            if current_chunk:
-                embed.add_field(
-                    name=f"{name} (Part {chunk_idx})" if chunk_idx > 1 else name,
-                    value="\n".join(current_chunk),
-                    inline=inline
-                )
+        guild = interaction.guild
+        bot = interaction.client
 
-        embeds = []
+        # Get active scrims
+        all_scrims = get_all_scrims()
+        active_scrims = [s for s in all_scrims if s.get("status") == "active"]
 
-        # 1. 🏆 Event Information
-        event_name = db_configs.get("event_name") or db_configs.get("default_category_name") or DEFAULT_CATEGORY_NAME
-        event_mode = db_configs.get("event_mode", "Esports Scrims / Qualifiers")
-        
-        is_open, open_h, open_m, current_t = await is_registration_open()
+        # Date for today's events
+        import datetime
+        utc_now = datetime.datetime.utcnow()
+        local_now = utc_now + datetime.timedelta(hours=TIMEZONE_OFFSET)
+        date_str = local_now.strftime("%Y-%m-%d")
+
+        # 1. 🏆 Page 1 - General Info & Stats
+        try:
+            _client.admin.command("ping")
+            db_status = "🟢 Connected"
+        except Exception:
+            db_status = "🔴 Disconnected / Error"
+
+        from config import MONGO_URI
+        masked_mongo_uri = "`Hidden / Masked`"
+        if MONGO_URI:
+            import re
+            masked_mongo_uri = re.sub(r'mongodb(\+srv)?://([^:]+):([^@]+)@', r'mongodb\1://***:***@', MONGO_URI)
+
+        bot_status = "🟢 Online"
+        bot_latency = f"{bot.latency * 1000:.0f} ms"
+        bot_version = db_configs.get("version", "2.0.0 (Esports Edition)")
+        bot_prefix = db_configs.get("prefix", "!")
+        total_slash_commands = len(bot.tree.get_commands())
+        reminders_cog = bot.get_cog("RemindersCog")
+        scheduler_status = "Active" if reminders_cog and reminders_cog.reminder_loop.is_running() else "Inactive"
+
+        general_lines = [
+            f"◆ **Bot Status:** {bot_status} (Latency: `{bot_latency}`)",
+            f"◆ **Database Status:** {db_status}",
+            f"◆ **MongoDB Connection:** `{masked_mongo_uri}`",
+            f"◆ **Version:** `{bot_version}`",
+            f"◆ **Prefix:** `{bot_prefix}`",
+            f"◆ **Slash Commands:** `{total_slash_commands}` synced",
+            f"◆ **Scheduler Status:** `{scheduler_status}`",
+            f"◆ **Total Active Scrims:** `{len(active_scrims)}`",
+            "",
+            "**── Active Scrims List ──**"
+        ]
+        for s in active_scrims:
+            general_lines.append(f"  ◆ **{s.get('scrim_id')}** ─ {s.get('name')} (Owner: <@{s.get('owner_id')}>)")
+        if not active_scrims:
+            general_lines.append("  *No active scrims configured.*")
+
+        # 2. 👥 Page 2 - Registration
+        is_open, open_h, open_m, _ = await is_registration_open()
         reg_status = "🟢 Open / Accepting Registrations" if is_open else "🔴 Closed / Locked"
         
-        # 12-hour format for open time
         ampm = "PM" if open_h >= 12 else "AM"
         display_h = open_h if 0 < open_h <= 12 else (open_h - 12 if open_h > 12 else 12)
         open_time_str = f"{display_h:02d}:{open_m:02d} {ampm} IST"
         
         lock_minutes = db_configs.get("lock_minutes", DEFAULT_LOCK_MINUTES)
         close_time_desc = f"Auto-Locks {lock_minutes} minutes before each group match start"
-        timezone_desc = f"IST (UTC+{TIMEZONE_OFFSET})"
         
-        emb1 = make_embed(title="🏆 Event Information", color=Theme.TEAL)
-        emb1.description = (
-            f"◆ **Event Name:** `{event_name}`\n"
-            f"◆ **Event Mode:** `{event_mode}`\n"
-            f"◆ **Registration Status:** {reg_status}\n"
-            f"◆ **Registration Open Time:** `{open_time_str}`\n"
-            f"◆ **Registration Close Time:** `{close_time_desc}`\n"
-            f"◆ **Event Time Zone:** `{timezone_desc}`"
-        )
-        embeds.append(emb1)
-
-        # 2. 👥 Registration Details
-        all_groups = group_model.get_all_groups(event_id)
+        toggle_auto_reg = db_configs.get("auto_registration_open", True)
+        toggle_memory = db_configs.get("team_memory", True)
+        toggle_waiting = db_configs.get("waiting_list", False)
+        
         default_capacity = db_configs.get("default_group_capacity", DEFAULT_GROUP_CAPACITY)
         default_reserved = db_configs.get("default_reserved_slots", DEFAULT_RESERVED_SLOTS)
-        
-        total_registered = reg_model.count_registrations(event_id)
-        total_capacity = sum(g.get("capacity", default_capacity) for g in all_groups)
-        
-        if len(all_groups) == 0:
-            fallback_groups_count = db_configs.get("default_group_count", DEFAULT_GROUP_COUNT)
-            total_capacity = fallback_groups_count * default_capacity
-            remaining_slots = total_capacity
-        else:
-            remaining_slots = max(0, total_capacity - total_registered)
-            
-        waiting_list_status = db_configs.get("waiting_list_status", "Disabled")
-        
-        is_locked_all = all(g.get("locked") for g in all_groups) if all_groups else not is_open
-        lock_status = "🔒 Locked" if is_locked_all else "🔓 Unlocked"
-        
-        emb2 = make_embed(title="👥 Registration Summary", color=Theme.INFO)
-        emb2.description = (
-            f"◆ **Capacity Per Group:** `{default_capacity}`\n"
-            f"◆ **Reserved Slots:** `{default_reserved}`\n"
-            f"◆ **Total Registered Teams:** `{total_registered}`\n"
-            f"◆ **Remaining Slots:** `{remaining_slots}`\n"
-            f"◆ **Total Capacity:** `{total_capacity}`\n"
-            f"◆ **Waiting List Status:** `{waiting_list_status}`\n"
-            f"◆ **Registration Lock Status:** `{lock_status}`"
-        )
-        embeds.append(emb2)
-
-        # 3. 📂 Group Information & Feature Toggles
-        # Read toggle states from MongoDB (default: True = enabled)
-        toggle_auto_group = db_configs.get("auto_group_generation", True)
-        toggle_auto_reg = db_configs.get("auto_registration_open", True)
-        toggle_midnight = db_configs.get("midnight_reset", True)
-        toggle_reminders = db_configs.get("match_reminders", True)
-        toggle_waiting = db_configs.get("waiting_list", False)
-        toggle_memory = db_configs.get("team_memory", True)
 
         def toggle_icon(val):
             return "🟢 Enabled" if val else "🔴 Disabled"
-        
-        total_groups = len(all_groups)
-        active_groups = sum(1 for g in all_groups if not g.get("archived"))
-        empty_groups = sum(1 for g in all_groups if g.get("current_count", 0) == g.get("reserved_slots", 0))
-        full_groups = sum(1 for g in all_groups if g.get("current_count", 0) >= g.get("capacity", default_capacity))
-        
-        group_naming_pattern = db_configs.get("group_naming_pattern", "G{index:04d}")
-        try:
-            next_group_id = group_naming_pattern.format(index=total_groups + 1)
-        except Exception:
-            next_group_id = f"G{total_groups + 1:04d}"
-            
-        emb3 = make_embed(title="📂 Group & Autopilot Configuration", color=Theme.GOLD)
-        emb3.description = (
-            f"**── Feature Toggles ──**\n"
-            f"◆ **Auto Group Generation:** {toggle_icon(toggle_auto_group)}\n"
-            f"◆ **Auto Registration Open:** {toggle_icon(toggle_auto_reg)}\n"
-            f"◆ **Midnight Reset:** {toggle_icon(toggle_midnight)}\n"
-            f"◆ **Match Reminders:** {toggle_icon(toggle_reminders)}\n"
-            f"◆ **Waiting List:** {toggle_icon(toggle_waiting)}\n"
-            f"◆ **Team Memory (30-day):** {toggle_icon(toggle_memory)}\n\n"
-            f"**── Group Stats ──**\n"
-            f"◆ **Total Groups Generated:** `{total_groups}`\n"
-            f"◆ **Active Groups:** `{active_groups}`\n"
-            f"◆ **Empty Groups:** `{empty_groups}`\n"
-            f"◆ **Full Groups:** `{full_groups}`\n"
-            f"◆ **Capacity Per Group:** `{default_capacity}`\n"
-            f"◆ **Group Naming Pattern:** `{group_naming_pattern}`\n"
-            f"◆ **Next Group ID:** `{next_group_id}`"
-        )
-        embeds.append(emb3)
 
-        # 4. 📂 Generated Groups List
-        group_lines = []
-        for g in all_groups:
-            gid = g.get("group_id")
-            count = g.get("current_count", 0)
-            cap = g.get("capacity", default_capacity)
-            reserved = g.get("reserved_slots", 0)
-            pub_count = max(0, count - reserved)
-            pub_cap = cap - reserved
-            group_lines.append(f"◆ **{gid}** • {pub_count}/{pub_cap}")
-            
-        if not group_lines:
-            group_lines.append("*No groups currently generated for today.*")
-            
-        groups_chunk_size = 20
-        for idx in range(0, len(group_lines), groups_chunk_size):
-            chunk = group_lines[idx:idx + groups_chunk_size]
-            emb_groups = make_embed(
-                title=f"📂 Generated Groups" if len(group_lines) <= groups_chunk_size else f"📂 Generated Groups (Page {idx//groups_chunk_size + 1})",
-                desc="\n".join(chunk),
-                color=Theme.INFO
-            )
-            embeds.append(emb_groups)
+        registration_lines = [
+            f"◆ **Registration Status:** {reg_status}",
+            f"◆ **Auto-Registration Open:** {toggle_icon(toggle_auto_reg)}",
+            f"◆ **Registration Open Time:** `{open_time_str}`",
+            f"◆ **Registration Close/Lock:** `{close_time_desc}`",
+            f"◆ **Default Capacity Per Group:** `{default_capacity}`",
+            f"◆ **Default Reserved Slots:** `{default_reserved}`",
+            f"◆ **Team Memory (30-day):** {toggle_icon(toggle_memory)}",
+            f"◆ **Waiting List:** {toggle_icon(toggle_waiting)}",
+        ]
 
-        # 5. 🗺 Match Configuration
-        m1_maps = set()
-        m1_times = set()
-        m2_maps = set()
-        m2_times = set()
+        # 3. 📅 Page 3 - Schedule
+        schedule_lines = []
+        for s in active_scrims:
+            s_id = s.get("scrim_id", "").upper()
+            s_name = s.get("name", "")
+            s_sched = s.get("schedule", [])
+            if s_sched:
+                schedule_lines.append(f"**✦ Scrim: {s_name} ({s_id}) Schedule:**")
+                for item in s_sched:
+                    g_num = item.get("group_number", 0) or item.get("group_id", "?")
+                    m1 = item.get("match1", {})
+                    m2 = item.get("match2", {})
+                    m1_desc = f"{m1.get('map', 'TBD')} @ {m1.get('start', 'TBD')}"
+                    m2_desc = f"{m2.get('map', 'TBD')} @ {m2.get('start', 'TBD')}"
+                    schedule_lines.append(f"  ◆ Group **{g_num}**: Match 1: `{m1_desc}` │ Match 2: `{m2_desc}`")
+            else:
+                schedule_lines.append(f"**✦ Scrim: {s_name} ({s_id})**: *No custom schedule.*")
+            schedule_lines.append("")
         
-        for g in all_groups:
-            m1 = g.get("match1", {})
-            m2 = g.get("match2", {})
-            if m1.get("map") and m1.get("map") != "TBD":
-                m1_maps.add(m1.get("map"))
-            if m1.get("start") and m1.get("start") != "TBD":
-                m1_times.add(m1.get("start"))
-            if m2.get("map") and m2.get("map") != "TBD":
-                m2_maps.add(m2.get("map"))
-            if m2.get("start") and m2.get("start") != "TBD":
-                m2_times.add(m2.get("start"))
-                
-        if not m1_maps or not m2_maps:
+        if not any(s.get("schedule") for s in active_scrims):
             schedule = load_schedule()
-            for s in schedule:
-                m1 = s.get("match1", {})
-                m2 = s.get("match2", {})
-                if m1.get("map") and m1.get("map") != "TBD":
-                    m1_maps.add(m1.get("map"))
-                if m1.get("start") and m1.get("start") != "TBD":
-                    m1_times.add(m1.get("start"))
-                if m2.get("map") and m2.get("map") != "TBD":
-                    m2_maps.add(m2.get("map"))
-                if m2.get("start") and m2.get("start") != "TBD":
-                    m2_times.add(m2.get("start"))
-                    
-        m1_map_str = ", ".join(sorted(m1_maps)) if m1_maps else "TBD"
-        m2_map_str = ", ".join(sorted(m2_maps)) if m2_maps else "TBD"
-        
-        def format_time_range(times_set):
-            if not times_set:
-                return "TBD"
-            times_list = sorted(list(times_set))
-            if len(times_list) == 1:
-                return times_list[0]
-            return f"{times_list[0]} - {times_list[-1]} (Varies)"
-            
-        m1_time_str = format_time_range(m1_times)
-        m2_time_str = format_time_range(m2_times)
-        
-        match_format = db_configs.get("match_format", "Squad TPP")
-        match_count = db_configs.get("match_count", 2)
-        
-        emb_match = make_embed(title="🗺 Match Configuration", color=Theme.ORANGE)
-        emb_match.description = (
-            f"◆ **Match 1 Map:** `{m1_map_str}`\n"
-            f"◆ **Match 1 Time:** `{m1_time_str}`\n"
-            f"◆ **Match 2 Map:** `{m2_map_str}`\n"
-            f"◆ **Match 2 Time:** `{m2_time_str}`\n"
-            f"◆ **Match Format:** `{match_format}`\n"
-            f"◆ **Match Count:** `{match_count}`"
-        )
-        embeds.append(emb_match)
+            schedule_lines = ["**✦ Default Schedule:**"]
+            for item in schedule:
+                g_num = item.get("group_number", 0) or item.get("group_id", "?")
+                m1 = item.get("match1", {})
+                m2 = item.get("match2", {})
+                m1_desc = f"{m1.get('map', 'TBD')} @ {m1.get('start', 'TBD')}"
+                m2_desc = f"{m2.get('map', 'TBD')} @ {m2.get('start', 'TBD')}"
+                schedule_lines.append(f"  ◆ Group **{g_num}**: Match 1: `{m1_desc}` │ Match 2: `{m2_desc}`")
 
-        # 6. 📢 Discord Configuration
+        # 4. 👥 Page 4 - Teams & Slots
+        teams_slots_lines = []
+        for s in active_scrims:
+            s_id = s.get("scrim_id", "").upper()
+            s_name = s.get("name", "")
+            
+            scrim_event_id = get_today_event_id(s_id)
+            scrim_groups = await asyncio.to_thread(group_model.get_all_groups, scrim_event_id, scrim_id=s_id)
+            total_regs = await asyncio.to_thread(reg_model.count_registrations, scrim_event_id)
+            
+            s_cap = s.get("settings", {}).get("capacity", default_capacity)
+            total_capacity = sum(g.get("capacity", s_cap) for g in scrim_groups)
+            
+            if len(scrim_groups) == 0:
+                fallback_groups_count = s.get("settings", {}).get("group_count") or db_configs.get("default_group_count", DEFAULT_GROUP_COUNT)
+                total_capacity = fallback_groups_count * s_cap
+                remaining_slots = total_capacity
+            else:
+                remaining_slots = max(0, total_capacity - total_regs)
+                
+            teams_slots_lines.append(f"**✦ Scrim: {s_name} ({s_id})**")
+            teams_slots_lines.append(f"  ◆ **Total Registered Teams:** `{total_regs}`")
+            teams_slots_lines.append(f"  ◆ **Total Capacity:** `{total_capacity}`")
+            teams_slots_lines.append(f"  ◆ **Remaining Slots:** `{remaining_slots}`")
+            if total_capacity > 0:
+                teams_slots_lines.append(f"  ◆ **Roster Fill:** {Theme.bar(total_regs, total_capacity, 14)}")
+            
+            group_lines = []
+            for g in scrim_groups:
+                gid = g.get("group_id")
+                count = g.get("current_count", 0)
+                cap = g.get("capacity", s_cap)
+                reserved = g.get("reserved_slots", 0)
+                pub_count = max(0, count - reserved)
+                pub_cap = cap - reserved
+                group_lines.append(f"    ▪ **Group {gid}:** `{pub_count}/{pub_cap}` registered")
+            
+            if group_lines:
+                teams_slots_lines.extend(group_lines)
+            else:
+                teams_slots_lines.append("    *No active groups provisioned today.*")
+            teams_slots_lines.append("")
+
+        # 5. ⚙️ Page 5 - Modules
+        modules_lines = []
+        for s in active_scrims:
+            s_id = s.get("scrim_id", "").upper()
+            s_name = s.get("name", "")
+            s_modules = s.get("modules", {})
+            
+            modules_lines.append(f"**✦ Scrim: {s_name} ({s_id}) Modules:**")
+            if s_modules:
+                for mod_name, mod_enabled in sorted(s_modules.items()):
+                    icon = "🟢 Enabled" if mod_enabled else "🔴 Disabled"
+                    modules_lines.append(f"  ◆ **{mod_name}:** {icon}")
+            else:
+                modules_lines.append("  *No custom modules configured.*")
+            modules_lines.append("")
+
+        # 6. 📢 Page 6 - Channels & Roles
+        channels_lines = [
+            "**── Global Config Channels ──**"
+        ]
         reg_channel_id = get_channel_config("register")
         announcement_channel_id = db_configs.get("channel_announcement") or db_configs.get("channel_announcements")
         if not announcement_channel_id:
@@ -1195,182 +1222,153 @@ class AdminPanelCog(commands.Cog):
                 
         result_channel_id = get_channel_config("leaderboard")
         admin_channel_id = get_channel_config("admin")
+        admin_log_channel_id = get_channel_config("admin_log")
+        registered_teams_channel_id = get_channel_config("registered_teams")
+
+        channels_lines.append(f"  ◆ **Registration:** <#{reg_channel_id}> (`{reg_channel_id}`)" if reg_channel_id else "  ◆ **Registration:** `Not set`")
+        channels_lines.append(f"  ◆ **Announcements:** <#{announcement_channel_id}> (`{announcement_channel_id}`)" if announcement_channel_id else "  ◆ **Announcements:** `Not set`")
+        channels_lines.append(f"  ◆ **Leaderboard:** <#{result_channel_id}> (`{result_channel_id}`)" if result_channel_id else "  ◆ **Leaderboard:** `Not set`")
+        channels_lines.append(f"  ◆ **Admin Command:** <#{admin_channel_id}> (`{admin_channel_id}`)" if admin_channel_id else "  ◆ **Admin Command:** `Not set`")
+        channels_lines.append(f"  ◆ **Admin Log:** <#{admin_log_channel_id}> (`{admin_log_channel_id}`)" if admin_log_channel_id else "  ◆ **Admin Log:** `Not set`")
+        channels_lines.append(f"  ◆ **Registration Receipts:** <#{registered_teams_channel_id}> (`{registered_teams_channel_id}`)" if registered_teams_channel_id else "  ◆ **Registration Receipts:** `Not set`")
+        channels_lines.append("")
         
-        reg_ch_mention = f"<#{reg_channel_id}> (`{reg_channel_id}`)" if reg_channel_id else "`Not set`"
-        ann_ch_mention = f"<#{announcement_channel_id}> (`{announcement_channel_id}`)" if announcement_channel_id else "`Not set`"
-        res_ch_mention = f"<#{result_channel_id}> (`{result_channel_id}`)" if result_channel_id else "`Not set`"
-        admin_ch_mention = f"<#{admin_channel_id}> (`{admin_channel_id}`)" if admin_channel_id else "`Not set`"
-        
-        # Category IDs
+        for s in active_scrims:
+            s_id = s.get("scrim_id", "").upper()
+            s_name = s.get("name", "")
+            s_channels = s.get("channels", {})
+            channels_lines.append(f"**── Scrim: {s_name} ({s_id}) Channels ──**")
+            if s_channels:
+                for ch_type, ch_id in sorted(s_channels.items()):
+                    ch_display = f"<#{ch_id}> (`{ch_id}`)" if ch_id else "`Not set`"
+                    channels_lines.append(f"  ◆ **{ch_type}:** {ch_display}")
+            else:
+                channels_lines.append("  *No custom channels configured.*")
+            channels_lines.append("")
+
+        # Roles and parent categories
         category_set = set()
         for k, v in db_configs.items():
             if k.startswith("category_") and isinstance(v, int):
                 category_set.add(v)
-        for g in all_groups:
-            cat_id = g.get("category_id")
-            if cat_id:
-                category_set.add(cat_id)
-                
-        category_ids_str = ", ".join(f"<#{cid}> (`{cid}`)" for cid in sorted(category_set)) if category_set else "None"
-        
-        # Role IDs
         role_mentions = []
         role_set = set()
-        for g in all_groups:
-            rid = g.get("role_id")
-            gid = g.get("group_id")
-            if rid:
-                role_mentions.append(f"Group {gid}: <@&{rid}> (`{rid}`)")
-                role_set.add(rid)
+        
+        for s in active_scrims:
+            s_id = s.get("scrim_id", "").upper()
+            scrim_event_id = get_today_event_id(s_id)
+            scrim_groups = await asyncio.to_thread(group_model.get_all_groups, scrim_event_id, scrim_id=s_id)
+            for g in scrim_groups:
+                cat_id = g.get("category_id")
+                if cat_id:
+                    category_set.add(cat_id)
+                rid = g.get("role_id")
+                gid = g.get("group_id")
+                if rid:
+                    role_mentions.append(f"  ◆ Group **{gid}** ({s_id}): <@&{rid}> (`{rid}`)")
+                    role_set.add(rid)
+
         for k, v in db_configs.items():
             if (k.endswith("_role") or k.startswith("role_")) and isinstance(v, int) and v not in role_set:
-                role_mentions.append(f"**{k}:** <@&{v}> (`{v}`)")
+                role_mentions.append(f"  ◆ **{k}:** <@&{v}> (`{v}`)")
                 role_set.add(v)
-                
-        role_mentions_str = "\n".join(role_mentions) if role_mentions else "No active roles configured."
-        
-        emb_discord = make_embed(title="📢 Discord Configuration", color=Theme.PREMIUM)
-        emb_discord.description = (
-            f"◆ **Registration Channel:** {reg_ch_mention}\n"
-            f"◆ **Announcement Channel:** {ann_ch_mention}\n"
-            f"◆ **Result Channel:** {res_ch_mention}\n"
-            f"◆ **Admin Channel:** {admin_ch_mention}\n"
-            f"◆ **Category IDs:** {category_ids_str}"
-        )
-        
-        add_split_field(emb_discord, "Role IDs", role_mentions_str, inline=False)
-        embeds.append(emb_discord)
 
-        # 7. ⚙️ Bot Configuration
-        try:
-            _client.admin.command("ping")
-            db_status = "🟢 Connected"
-        except Exception:
-            db_status = "🔴 Disconnected / Error"
-            
-        from config import MONGO_URI
-        masked_mongo_uri = "`Hidden / Masked`"
-        if MONGO_URI:
-            import re
-            masked_mongo_uri = re.sub(r'mongodb(\+srv)?://([^:]+):([^@]+)@', r'mongodb\1://***:***@', MONGO_URI)
-            
-        bot_status = "🟢 Online"
-        bot_latency = f"{bot.latency * 1000:.0f} ms"
-        bot_version = db_configs.get("version", "2.0.0 (Esports Edition)")
-        bot_prefix = db_configs.get("prefix", "!")
-        total_slash_commands = len(bot.tree.get_commands())
-        
-        reminders_cog = bot.get_cog("RemindersCog")
-        scheduler_status = "Active" if reminders_cog and reminders_cog.reminder_loop.is_running() else "Inactive"
-        
-        emb_bot = make_embed(title="⚙️ Bot Configuration", color=Theme.DARK)
-        emb_bot.description = (
-            f"◆ **Database Status:** {db_status}\n"
-            f"◆ **MongoDB Connection:** `{masked_mongo_uri}`\n"
-            f"◆ **Bot Status:** {bot_status} (Latency: `{bot_latency}`)\n"
-            f"◆ **Version:** `{bot_version}`\n"
-            f"◆ **Prefix:** `{bot_prefix}`\n"
-            f"◆ **Slash Commands:** `{total_slash_commands}` synced\n"
-            f"◆ **Scheduler Status:** `{scheduler_status}`"
-        )
-        embeds.append(emb_bot)
+        channels_lines.append("**── Parent Categories & Roles ──**")
+        category_ids_str = ", ".join(f"<#{cid}> (`{cid}`)" for cid in sorted(category_set)) if category_set else "None"
+        channels_lines.append(f"  ◆ **Parent Categories:** {category_ids_str}")
+        channels_lines.append("")
+        channels_lines.append("**── Discord Roles ──**")
+        if role_mentions:
+            channels_lines.extend(role_mentions)
+        else:
+            channels_lines.append("  *No active roles found.*")
 
-        # 8. Miscellaneous Configs (Dynamically fetch all other config values in DB and config.py)
-        displayed_db_keys = {
-            "event_name", "event_mode", "default_group_capacity", "default_reserved_slots",
-            "waiting_list_status", "default_group_count", "group_naming_pattern",
-            "match_format", "match_count", "channel_register", "channel_admin",
-            "channel_admin_log", "channel_leaderboard", "channel_registered_teams",
-            "version", "prefix", "schedule", "registration_open_hour", "registration_open_minute",
-            "lock_minutes", "reminder_lead_minutes", "token", "mongo_uri"
+        # 7. 🏆 Page 7 - Points & Results
+        from config import DEFAULT_POSITION_POINTS
+        points_lines = []
+        for s in active_scrims:
+            s_id = s.get("scrim_id", "").upper()
+            s_name = s.get("name", "")
+            s_points = s.get("points_config", {})
+            s_settings = s.get("settings", {})
+            
+            m_format = s_settings.get("match_format", db_configs.get("match_format", "Squad TPP"))
+            m_count = s_settings.get("match_count", db_configs.get("match_count", 2))
+            
+            points_lines.append(f"**✦ Scrim: {s_name} ({s_id})**")
+            points_lines.append(f"  ◆ **Match Format:** `{m_format}`")
+            points_lines.append(f"  ◆ **Match Count:** `{m_count}`")
+            points_lines.append(f"  ◆ **Kill Points:** `{s_points.get('kill_points', 1)}`")
+            
+            pos_pts = s_points.get("position_points", {})
+            if pos_pts:
+                pts_summary = ", ".join(f"#{rank}: {pts}pt" for rank, pts in sorted(pos_pts.items(), key=lambda x: int(x[0])) if pts > 0)
+                points_lines.append(f"  ◆ **Placement Points:** `{pts_summary or 'No points configured'}`")
+            else:
+                points_lines.append("  ◆ **Placement Points:** `None`")
+            points_lines.append("")
+            
+        if not active_scrims:
+            kill_points = db_configs.get("kill_points", 1)
+            pos_pts = db_configs.get("position_points", DEFAULT_POSITION_POINTS)
+            points_lines.append("**✦ Global Fallback Config:**")
+            points_lines.append(f"  ◆ **Kill Points:** `{kill_points}`")
+            if isinstance(pos_pts, dict):
+                pts_summary = ", ".join(f"#{rank}: {pts}pt" for rank, pts in sorted(pos_pts.items(), key=lambda x: int(x[0])) if pts > 0)
+                points_lines.append(f"  ◆ **Placement Points:** `{pts_summary}`")
+            else:
+                points_lines.append(f"  ◆ **Placement Points:** `{pos_pts}`")
+
+        # 8. ⚙️ Page 8 - Advanced Settings
+        displayed_keys = {
+            "version", "prefix", "token", "mongo_uri", "commands_hash", "commands_synced", "sync_commands_on_startup",
+            "registration_open_hour", "registration_open_minute", "lock_minutes", "default_group_capacity", 
+            "default_reserved_slots", "waiting_list_status", "team_memory", "waiting_list", "auto_registration_open", 
+            "last_open_date", "schedule", "kill_points", "position_points", "match_format", "match_count",
+            "DEFAULT_POSITION_POINTS", "RANK_EMOJIS", "auto_group_generation", "midnight_reset", "match_reminders", 
+            "last_reset_date", "default_group_count", "default_category_name", "event_name", "event_mode", 
+            "group_naming_pattern", "default_reserved_slots", "registration_open_subscribers", "multi_scrim_migrated"
         }
         for k in db_configs.keys():
-            if k.startswith("category_") or k.startswith("channel_") or k.startswith("role_"):
-                displayed_db_keys.add(k)
-                
-        import inspect
-        config_configs = {}
-        for name, val in inspect.getmembers(config):
-            if name.isupper() and not inspect.ismodule(val) and not inspect.isroutine(val):
-                if name in ("TOKEN", "MONGO_URI"):
-                    continue
-                displayed_config_names = {
-                    "DEFAULT_GROUP_CAPACITY", "DEFAULT_GROUP_COUNT", "DEFAULT_RESERVED_SLOTS",
-                    "DEFAULT_REMINDER_LEAD_MINUTES", "DEFAULT_LOCK_MINUTES", "REGISTRATION_OPEN_HOUR",
-                    "REGISTRATION_OPEN_MINUTE", "DEFAULT_CATEGORY_NAME", "BOT_PREFIX", "TIMEZONE_OFFSET"
-                }
-                if name not in displayed_config_names:
-                    config_configs[name] = val
-                    
-        other_configs = []
+            if k.startswith("category_") or k.startswith("channel_") or k.startswith("role_") or k.endswith("_role") or k.endswith("_channel"):
+                displayed_keys.add(k)
+
+        advanced_settings = []
         for k, v in db_configs.items():
-            if k not in displayed_db_keys:
-                if k == "position_points":
-                    if isinstance(v, dict):
-                        pts_summary = ", ".join(f"#{rank}: {pts}pt" for rank, pts in sorted(v.items(), key=lambda x: int(x[0])) if pts > 0)
-                        other_configs.append(f"  ◆ **position_points:** `{pts_summary or 'No points configured'}`")
-                    else:
-                        other_configs.append(f"  ◆ **position_points:** `{v}`")
-                elif k == "registration_open_subscribers":
-                    sub_count = len(v) if isinstance(v, list) else 0
-                    other_configs.append(f"  ◆ **notify_subscribers:** `{sub_count} users`")
-                elif k in ("token", "mongo_uri"):
-                    other_configs.append(f"  ◆ **{k}:** `*Hidden*`")
-                else:
-                    other_configs.append(f"  ◆ **{k}:** `{v}`")
-                    
+            if k not in displayed_keys:
+                advanced_settings.append(f"  ◆ **{k}:** `{v}`")
         for k, v in config_configs.items():
-            if k.lower() in db_configs or k in db_configs:
-                continue
-            if k == "DEFAULT_POSITION_POINTS":
-                if isinstance(v, dict):
-                    pts_summary = ", ".join(f"#{rank}: {pts}pt" for rank, pts in sorted(v.items(), key=lambda x: int(x[0])) if pts > 0)
-                    other_configs.append(f"  ◆ **DEFAULT_POSITION_POINTS:** `{pts_summary}`")
-                else:
-                    other_configs.append(f"  ◆ **DEFAULT_POSITION_POINTS:** `{v}`")
-            elif k == "RANK_EMOJIS":
-                other_configs.append(f"  ◆ **RANK_EMOJIS:** `{len(v)} emojis`")
-            else:
-                other_configs.append(f"  ◆ **{k}:** `{v}`")
-                
-        # Split other_configs across multiple embeds if description grows too long
-        if other_configs:
-            other_chunk = []
-            char_count = 0
-            other_page = 1
-            
-            for line in other_configs:
-                if char_count + len(line) + 1 > 3800:
-                    emb_other = make_embed(
-                        title=f"⚙️ Miscellaneous Configs (Page {other_page})",
-                        desc="\n".join(other_chunk),
-                        color=Theme.ORANGE
-                    )
-                    embeds.append(emb_other)
-                    other_chunk = [line]
-                    char_count = len(line)
-                    other_page += 1
-                else:
-                    other_chunk.append(line)
-                    char_count += len(line) + 1
-                    
-            if other_chunk:
-                emb_other = make_embed(
-                    title=f"⚙️ Miscellaneous Configs (Page {other_page})" if other_page > 1 else "⚙️ Miscellaneous Configs",
-                    desc="\n".join(other_chunk),
-                    color=Theme.ORANGE
-                )
-                embeds.append(emb_other)
+            if k not in displayed_keys and k.lower() not in displayed_keys and k.lower() not in db_configs and k not in db_configs:
+                advanced_settings.append(f"  ◆ **{k}:** `{v}`")
 
-        # Format footer for page indexing on all embeds and send
-        total_embeds = len(embeds)
-        for idx, emb in enumerate(embeds):
-            emb.set_footer(text=f"Embed {idx+1}/{total_embeds} │ Mack Bot Configuration Overview")
+        advanced_lines = ["**── Additional Database & Config Constants ──**"]
+        for line in sorted(advanced_settings):
+            advanced_lines.append(line)
+        if len(advanced_lines) == 1:
+            advanced_lines.append("  *No custom advanced settings registered.*")
 
-        # Send embeds in chunks of 10
-        for i in range(0, len(embeds), 10):
-            chunk = embeds[i:i + 10]
-            await interaction.followup.send(embeds=chunk, ephemeral=True)
+        # Compile embeds with logic pagination split support
+        all_embeds = []
+        all_embeds.extend(self.paginate_logical_page("⚙️ Config: Page 1 - General", general_lines, [], Theme.TEAL))
+        all_embeds.extend(self.paginate_logical_page("⚙️ Config: Page 2 - Registration", registration_lines, [], Theme.INFO))
+        all_embeds.extend(self.paginate_logical_page("⚙️ Config: Page 3 - Schedule", schedule_lines, [], Theme.WARNING))
+        all_embeds.extend(self.paginate_logical_page("⚙️ Config: Page 4 - Teams & Slots", teams_slots_lines, [], Theme.ACCENT))
+        all_embeds.extend(self.paginate_logical_page("⚙️ Config: Page 5 - Modules", modules_lines, [], Theme.PREMIUM))
+        all_embeds.extend(self.paginate_logical_page("⚙️ Config: Page 6 - Channels & Roles", channels_lines, [], Theme.ROSE))
+        all_embeds.extend(self.paginate_logical_page("⚙️ Config: Page 7 - Points & Results", points_lines, [], Theme.GOLD))
+        all_embeds.extend(self.paginate_logical_page("⚙️ Config: Page 8 - Advanced Settings", advanced_lines, [], Theme.ORANGE))
+
+        # Apply correct index footer to all embeds
+        total_pages = len(all_embeds)
+        for idx, emb in enumerate(all_embeds):
+            emb.set_footer(text=f"Page {idx+1} of {total_pages} │ Mack Bot Configuration Overview")
+
+        # Send pagination view
+        if all_embeds:
+            view = ConfigPaginationView(all_embeds, interaction.user.id)
+            await interaction.followup.send(embed=all_embeds[0], view=view, ephemeral=True)
+        else:
+            await interaction.followup.send("⚠️ No configuration pages found.", ephemeral=True)
 
     # ─────────────── UNBAN COMMAND ───────────────
 
@@ -1619,6 +1617,43 @@ class AdminPanelCog(commands.Cog):
             Theme.INFO
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+class ConfigPaginationView(ui.View):
+    """View class for paginating the /viewconfig command output."""
+
+    def __init__(self, pages: list, user_id: int):
+        super().__init__(timeout=300)
+        self.pages = pages
+        self.user_id = user_id
+        self.current_page = 0
+        self.update_buttons()
+
+    def update_buttons(self):
+        self.prev_btn.disabled = self.current_page == 0
+        self.next_btn.disabled = self.current_page == len(self.pages) - 1
+
+    @ui.button(label="◀ Previous", style=discord.ButtonStyle.secondary, custom_id="config_prev")
+    async def prev_btn(self, interaction: discord.Interaction, button: ui.Button):
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("❌ This is not your config menu.", ephemeral=True)
+            return
+        if self.current_page > 0:
+            self.current_page -= 1
+            self.update_buttons()
+            embed = self.pages[self.current_page]
+            await interaction.response.edit_message(embed=embed, view=self)
+
+    @ui.button(label="Next ▶", style=discord.ButtonStyle.primary, custom_id="config_next")
+    async def next_btn(self, interaction: discord.Interaction, button: ui.Button):
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("❌ This is not your config menu.", ephemeral=True)
+            return
+        if self.current_page < len(self.pages) - 1:
+            self.current_page += 1
+            self.update_buttons()
+            embed = self.pages[self.current_page]
+            await interaction.response.edit_message(embed=embed, view=self)
 
 
 # ═══════════════════ ADMIN PANEL QUICK VIEW ═══════════════════

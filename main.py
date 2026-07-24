@@ -97,22 +97,45 @@ class MackBot(commands.Bot):
 
         # Sync slash commands dynamically to avoid rate limits
         from database import get_config, set_config
-        commands_synced = await asyncio.to_thread(get_config, "commands_synced", False)
+        import hashlib
+
+        def get_commands_signature(tree) -> str:
+            """Compute a deterministic hash/signature of the slash command tree."""
+            def get_cmd_sig(cmd) -> str:
+                if isinstance(cmd, discord.app_commands.Group):
+                    sub_sigs = [get_cmd_sig(c) for c in cmd.commands]
+                    sub_sigs.sort()
+                    return f"Group({cmd.name}, desc={cmd.description}, sub=[{','.join(sub_sigs)}])"
+                else:
+                    params = []
+                    for p in cmd.parameters:
+                        params.append(f"{p.name}:{p.type}:{p.required}")
+                    params.sort()
+                    return f"Cmd({cmd.name}, desc={cmd.description}, params=[{','.join(params)}])"
+
+            sigs = [get_cmd_sig(cmd) for cmd in tree.get_commands()]
+            sigs.sort()
+            combined = "\n".join(sigs)
+            return hashlib.sha256(combined.encode("utf-8")).hexdigest()
+
+        current_hash = get_commands_signature(self.tree)
+        stored_hash = await asyncio.to_thread(get_config, "commands_hash", "")
         sync_requested = await asyncio.to_thread(get_config, "sync_commands_on_startup", False)
 
-        if not commands_synced or sync_requested:
+        if current_hash != stored_hash or sync_requested:
             if GUILD_ID:
                 guild = discord.Object(id=int(GUILD_ID))
                 self.tree.copy_global_to(guild=guild)
                 await self.tree.sync(guild=guild)
-                print(f"🔄 Synced slash commands to guild {GUILD_ID}", flush=True)
+                print(f"🔄 Synced slash commands to guild {GUILD_ID} (Hash mismatch or Sync requested)", flush=True)
             else:
                 await self.tree.sync()
-                print("🔄 Synced slash commands globally", flush=True)
+                print("🔄 Synced slash commands globally (Hash mismatch or Sync requested)", flush=True)
+            await asyncio.to_thread(set_config, "commands_hash", current_hash)
             await asyncio.to_thread(set_config, "commands_synced", True)
             await asyncio.to_thread(set_config, "sync_commands_on_startup", False)
         else:
-            print("🔄 Skipping slash command sync (already synced). Set config 'sync_commands_on_startup' to True to force sync.", flush=True)
+            print("🔄 Skipping slash command sync (commands match stored configuration hash).", flush=True)
 
     @staticmethod
     def _async_exception_handler(loop, context):
@@ -206,6 +229,9 @@ async def manual_sync(ctx):
     """[Admin] Manually sync slash commands to Discord."""
     try:
         from config import GUILD_ID
+        from database import set_config
+        import hashlib
+
         if GUILD_ID:
             guild = discord.Object(id=int(GUILD_ID))
             bot.tree.copy_global_to(guild=guild)
@@ -214,6 +240,30 @@ async def manual_sync(ctx):
         else:
             synced = await bot.tree.sync()
             await ctx.send(f"✅ Synced {len(synced)} slash commands globally.")
+
+        # Update database hash to match current commands
+        def get_commands_signature(tree) -> str:
+            def get_cmd_sig(cmd) -> str:
+                if isinstance(cmd, discord.app_commands.Group):
+                    sub_sigs = [get_cmd_sig(c) for c in cmd.commands]
+                    sub_sigs.sort()
+                    return f"Group({cmd.name}, desc={cmd.description}, sub=[{','.join(sub_sigs)}])"
+                else:
+                    params = []
+                    for p in cmd.parameters:
+                        params.append(f"{p.name}:{p.type}:{p.required}")
+                    params.sort()
+                    return f"Cmd({cmd.name}, desc={cmd.description}, params=[{','.join(params)}])"
+
+            sigs = [get_cmd_sig(cmd) for cmd in tree.get_commands()]
+            sigs.sort()
+            combined = "\n".join(sigs)
+            return hashlib.sha256(combined.encode("utf-8")).hexdigest()
+
+        current_hash = get_commands_signature(bot.tree)
+        await asyncio.to_thread(set_config, "commands_hash", current_hash)
+        await asyncio.to_thread(set_config, "commands_synced", True)
+        await asyncio.to_thread(set_config, "sync_commands_on_startup", False)
     except Exception as e:
         await ctx.send(f"❌ Failed to sync: `{str(e)}`")
 
