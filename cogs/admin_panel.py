@@ -279,14 +279,14 @@ class GroupControlPanelView(ui.View):
             )
             return
 
-        event_id, group_id = self._resolve_context(interaction)
+        event_id, group_id, scrim_id = self._resolve_context(interaction)
         if not event_id or not group_id:
             await interaction.response.send_message(embed=error_embed("❌ Error", "Group context lost."), ephemeral=True)
             return
 
         cog = interaction.client.get_cog("RemindersCog")
         if cog and group_id:
-            await cog.remind_group.callback(cog, interaction, group_id=group_id)
+            await cog.remind_group.callback(cog, interaction, group_id=group_id, scrim_id=scrim_id)
         else:
             await interaction.response.send_message(
                 embed=error_embed("❌ Error", "Reminders cog not loaded or group not found."),
@@ -303,14 +303,14 @@ class GroupControlPanelView(ui.View):
             )
             return
 
-        event_id, group_id = self._resolve_context(interaction)
+        event_id, group_id, scrim_id = self._resolve_context(interaction)
         if not event_id or not group_id:
             await interaction.response.send_message(embed=error_embed("❌ Error", "Group context lost."), ephemeral=True)
             return
 
         cog = interaction.client.get_cog("RemindersCog")
         if cog and group_id:
-            await cog.publish_slot_list.callback(cog, interaction, group_id=group_id)
+            await cog.publish_slot_list.callback(cog, interaction, group_id=group_id, scrim_id=scrim_id)
         else:
             await interaction.response.send_message(
                 embed=error_embed("❌ Error", "Reminders cog not loaded or group not found."),
@@ -326,7 +326,7 @@ class GroupControlPanelView(ui.View):
         For teams: shows Cancel Slot / Change Schedule
         For admins: shows Edit Match / Move Team
         """
-        event_id, group_id = self._resolve_context(interaction)
+        event_id, group_id, scrim_id = self._resolve_context(interaction)
         if not event_id or not group_id:
             await interaction.response.send_message(embed=error_embed("❌ Error", "Group context lost."), ephemeral=True)
             return
@@ -391,7 +391,7 @@ class GroupControlPanelView(ui.View):
             )
             return
 
-        event_id, _ = self._resolve_context(interaction)
+        event_id, _, _ = self._resolve_context(interaction)
         if not event_id:
             from config import get_today_event_id
             event_id = get_today_event_id()
@@ -438,18 +438,19 @@ class GroupControlPanelView(ui.View):
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     def _resolve_context(self, interaction):
-        """Resolve the true event_id and group_id from the channel context dynamically."""
-        if self.event_id and self.group_id:
-            return self.event_id, self.group_id
-
+        """Resolve the true event_id, group_id, and scrim_id from the channel context dynamically."""
         from database import groups as groups_collection
         doc = groups_collection.find_one({
             "channel_id": interaction.channel.id,
             "archived": {"$ne": True}
         })
         if doc:
-            return doc.get("event_id"), doc.get("group_id")
-        return None, None
+            return doc.get("event_id"), doc.get("group_id"), doc.get("scrim_id")
+        
+        # Fallback to instance variables
+        if self.event_id and self.group_id:
+            return self.event_id, self.group_id, getattr(self, "scrim_id", None)
+        return None, None, None
 
 
 # ═══════════════════ ADMIN MANAGE SUB-VIEW ═══════════════════

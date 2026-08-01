@@ -140,9 +140,12 @@ def move_slot(event_id: str, from_group_id: str, to_group_id: str, scrim_id: str
     old_group = release_slot(event_id, from_group_id)
     return old_group, new_group
 
-def get_group(event_id: str, group_id: str):
+def get_group(event_id: str, group_id: str, scrim_id: str = None):
     """Get a specific group document."""
-    return groups.find_one({"event_id": event_id, "group_id": group_id})
+    query = {"event_id": event_id, "group_id": group_id}
+    if scrim_id:
+        query["scrim_id"] = scrim_id
+    return groups.find_one(query)
 
 def get_all_groups(event_id: str, include_archived=False, scrim_id: str = None):
     """Get all groups for an event, sorted by group_id."""

@@ -68,10 +68,10 @@ async def safe_edit_message(channel: discord.TextChannel, msg_id: int, embed: di
         
     return msg_id
 
-async def update_group_roster(guild: discord.Guild, event_id: str, group_id: str):
+async def update_group_roster(guild: discord.Guild, event_id: str, group_id: str, scrim_id: str = None):
     """Update the live roster embed in the specific group channel."""
     # Run DB calls in thread
-    group_doc = await asyncio.to_thread(group_model.get_group, event_id, group_id)
+    group_doc = await asyncio.to_thread(group_model.get_group, event_id, group_id, scrim_id)
     if not group_doc:
         return
 

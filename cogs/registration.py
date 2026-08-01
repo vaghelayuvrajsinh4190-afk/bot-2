@@ -510,7 +510,7 @@ class ConfirmRegistrationView(ui.View):
         await interaction.followup.send(embed=success, ephemeral=True)
 
         # Refresh the roster in the group channel
-        await update_group_roster(interaction.guild, event_id, group_id)
+        await update_group_roster(interaction.guild, event_id, group_id, scrim_id)
 
         # Refresh the slot availability embed in register channel
         await update_registration_board(interaction.guild, event_id)

@@ -360,9 +360,9 @@ class RemindersCog(commands.Cog):
     async def cog_unload(self):
         self.reminder_loop.cancel()
 
-    async def send_reminder_embed(self, guild: discord.Guild, event_id: str, group_doc: dict):
+    async def send_reminder_embed(self, guild: discord.Guild, event_id: str, group_doc: dict, target_channel: discord.TextChannel = None):
         group_id = group_doc["group_id"]
-        channel = guild.get_channel(group_doc.get("channel_id"))
+        channel = target_channel or guild.get_channel(group_doc.get("channel_id"))
         role = guild.get_role(group_doc.get("role_id"))
 
         if not channel:
@@ -565,9 +565,9 @@ class RemindersCog(commands.Cog):
     )
     @app_commands.describe(group_id="Group ID (e.g. G0001)")
     @app_commands.checks.has_permissions(administrator=True)
-    async def remind_group(self, interaction: discord.Interaction, group_id: str):
-        event_id = get_today_event_id()
-        group_doc = await asyncio.to_thread(group_model.get_group, event_id, group_id.upper())
+    async def remind_group(self, interaction: discord.Interaction, group_id: str, scrim_id: str = None):
+        event_id = get_today_event_id(scrim_id)
+        group_doc = await asyncio.to_thread(group_model.get_group, event_id, group_id.upper(), scrim_id)
 
         if not group_doc:
             await interaction.response.send_message(
@@ -577,7 +577,7 @@ class RemindersCog(commands.Cog):
             return
 
         guild = interaction.guild
-        success = await self.send_reminder_embed(guild, event_id, group_doc)
+        success = await self.send_reminder_embed(guild, event_id, group_doc, target_channel=interaction.channel)
 
         if success:
             await interaction.response.send_message(
@@ -688,10 +688,10 @@ class RemindersCog(commands.Cog):
     )
     @app_commands.describe(group_id="Group ID (e.g. G0001)")
     @app_commands.checks.has_permissions(administrator=True)
-    async def publish_slot_list(self, interaction: discord.Interaction, group_id: str):
-        event_id = get_today_event_id()
+    async def publish_slot_list(self, interaction: discord.Interaction, group_id: str, scrim_id: str = None):
+        event_id = get_today_event_id(scrim_id)
         gid = group_id.upper()
-        group_doc = await asyncio.to_thread(group_model.get_group, event_id, gid)
+        group_doc = await asyncio.to_thread(group_model.get_group, event_id, gid, scrim_id)
 
         if not group_doc:
             await interaction.response.send_message(
@@ -701,7 +701,7 @@ class RemindersCog(commands.Cog):
             return
 
         guild = interaction.guild
-        channel = guild.get_channel(group_doc.get("channel_id"))
+        channel = interaction.channel
         if not channel:
             await interaction.response.send_message(
                 embed=error_embed("❌ Channel Missing", "Group channel not found."),
