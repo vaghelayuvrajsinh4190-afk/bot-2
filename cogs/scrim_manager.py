@@ -510,6 +510,9 @@ class ScrimManagerCog(commands.Cog):
         app_commands.Choice(name="🔒 lock_minutes", value="lock_minutes"),
         app_commands.Choice(name="⏰ reminder_lead_minutes", value="reminder_lead_minutes"),
         app_commands.Choice(name="📢 channel_mode", value="channel_mode"),
+        app_commands.Choice(name="🛡️ access_mode", value="access_mode"),
+        app_commands.Choice(name="🔑 access_role_id", value="access_role_id"),
+        app_commands.Choice(name="🌐 cross_tier_registration", value="cross_tier_registration"),
     ])
     async def scrim_settings(self, interaction: discord.Interaction, scrim_id: str, setting: str = None, value: str = None):
         scrim = scrim_model.get_scrim(scrim_id)
@@ -551,6 +554,20 @@ class ScrimManagerCog(commands.Cog):
             except ValueError:
                 await interaction.response.send_message(
                     embed=error_embed("❌ Invalid", f"`{setting}` must be a number."),
+                    ephemeral=True
+                )
+                return
+
+
+        if setting == "cross_tier_registration":
+            value = value.lower() in ("true", "1", "yes", "on")
+
+        if setting == "access_role_id":
+            try:
+                value = int(value)
+            except ValueError:
+                await interaction.response.send_message(
+                    embed=error_embed("❌ Invalid", f"`{setting}` must be a Role ID (number)."),
                     ephemeral=True
                 )
                 return
