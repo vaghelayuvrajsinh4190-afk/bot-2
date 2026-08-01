@@ -85,6 +85,8 @@ class MackBot(commands.Bot):
             "cogs.points",
             "cogs.scrims_reset",
             "cogs.scrim_manager",
+            "cogs.global_tracker",
+            "cogs.tier_management",
         ]
 
         for cog in cog_list:

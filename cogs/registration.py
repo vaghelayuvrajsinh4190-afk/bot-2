@@ -334,7 +334,50 @@ class ConfirmRegistrationView(ui.View):
     )
     async def confirm_registration(self, interaction: discord.Interaction, button: ui.Button):
         owner_id = str(interaction.user.id)
-        event_id = get_today_event_id(self.scrim_id)
+        scrim_id = self.scrim_id or "SQ"
+        event_id = get_today_event_id(scrim_id)
+        date_str = datetime.datetime.now().strftime("%Y-%m-%d")
+
+        from models.scrim import get_scrim
+        scrim_doc = await asyncio.to_thread(get_scrim, scrim_id)
+        scrim_settings = scrim_doc.get("settings", {}) if scrim_doc else {}
+
+        # 1. Team Tag Validation
+        if len(self.team_name) < 3 or len(self.team_name) > 50:
+            await interaction.response.send_message(
+                embed=error_embed("❌ Invalid Team Name", "Team name must be between 3 and 50 characters."),
+                ephemeral=True
+            )
+            return
+
+        # 2. Tier Gatekeeping Check
+        access_mode = scrim_settings.get("access_mode", "open")
+        access_role_id = scrim_settings.get("access_role_id")
+        whitelist = scrim_settings.get("whitelist", [])
+
+        has_access = False
+        if access_mode == "open":
+            has_access = True
+        elif access_mode == "role":
+            if access_role_id and discord.utils.get(interaction.user.roles, id=int(access_role_id)):
+                has_access = True
+        elif access_mode == "whitelist":
+            if owner_id in whitelist:
+                has_access = True
+        elif access_mode == "role_or_whitelist":
+            if (access_role_id and discord.utils.get(interaction.user.roles, id=int(access_role_id))) or (owner_id in whitelist):
+                has_access = True
+
+        if not has_access:
+            await interaction.response.send_message(
+                embed=error_embed("🔒 Access Denied", "You do not have the required role or whitelist access to register in this tier."),
+                ephemeral=True
+            )
+            return
+
+        # 3. Cross-Tier Duplicate Configuration
+        cross_tier_allowed = scrim_settings.get("cross_tier_registration", False)
+        check_date = None if cross_tier_allowed else date_str
 
         # Check if banned asynchronously
         is_ban, ban_doc = await asyncio.to_thread(punishment.is_banned, owner_id, self.scrim_id)
@@ -345,21 +388,23 @@ class ConfirmRegistrationView(ui.View):
             )
             return
 
-        # Check if already registered today asynchronously
-        is_registered = await asyncio.to_thread(reg_model.is_already_registered, owner_id, event_id)
+        # Check if already registered today asynchronously (with optional cross-tier check)
+        is_registered = await asyncio.to_thread(reg_model.is_already_registered, owner_id, event_id, check_date)
         if is_registered:
+            err_msg = "You are already registered for today." if cross_tier_allowed else "You are already registered in a scrim today (cross-tier registration is disabled)."
             await interaction.response.send_message(
-                embed=error_embed("❌ Error", "You are already registered for today."),
+                embed=error_embed("❌ Error", err_msg),
                 ephemeral=True
             )
             return
 
-        # Check teammate status asynchronously
+        # Check teammate status asynchronously (with optional cross-tier check)
         for m in self.selected_members:
-            is_reg, existing_team = await asyncio.to_thread(reg_model.is_teammate_registered, str(m.id), event_id)
+            is_reg, existing_team = await asyncio.to_thread(reg_model.is_teammate_registered, str(m.id), event_id, check_date)
             if is_reg:
+                err_msg = f"{m.mention} is already registered in team **{existing_team}**." if cross_tier_allowed else f"{m.mention} is already registered in team **{existing_team}** in a scrim today."
                 await interaction.response.send_message(
-                    embed=error_embed("❌ Error", f"{m.mention} is already registered in team **{existing_team}**."),
+                    embed=error_embed("❌ Error", err_msg),
                     ephemeral=True
                 )
                 return

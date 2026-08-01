@@ -177,6 +177,27 @@ class PointsCog(commands.Cog):
 
         team_key = actual_team_name.strip().lower()
 
+        # Check if result already exists to compute delta for global tracker
+        existing_result = await asyncio.to_thread(
+            results_collection.find_one,
+            {
+                "event_id": event_id,
+                "group_id": gid,
+                "match_number": match_number,
+                "team_key": team_key
+            }
+        )
+
+        old_pts = existing_result.get("total_points", 0) if existing_result else 0
+        old_kills = existing_result.get("kills", 0) if existing_result else 0
+        old_win = 1 if (existing_result and existing_result.get("position") == 1) else 0
+
+        delta_pts = total_pts - old_pts
+        delta_kills = kills - old_kills
+        new_win = 1 if position == 1 else 0
+        delta_win = new_win - old_win
+        matches_played = 1 if not existing_result else 0
+
         await asyncio.to_thread(
             results_collection.update_one,
             {
@@ -203,6 +224,15 @@ class PointsCog(commands.Cog):
             },
             upsert=True
         )
+
+        # Update global tracker
+        if owner_id:
+            from models.global_teams import update_team_stats, upsert_team
+            current_tier = tier or "SQ"
+            await asyncio.to_thread(upsert_team, owner_id, actual_team_name, current_tier)
+            await asyncio.to_thread(
+                update_team_stats, owner_id, delta_pts, delta_kills, matches_played, delta_win
+            )
 
         medal = get_rank_emoji(position)
         embed = make_embed(

@@ -53,6 +53,7 @@ punishments    = db["punishments"]       # Bans and strikes
 bot_config     = db["bot_config"]        # Bot settings (channels, config)
 match_results  = db["match_results"]     # Points / leaderboard data
 scrims         = db["scrims"]            # Dynamic scrim configurations
+global_teams   = db["global_teams"]      # Cross-tier team tracking & stats
 
 
 # ═══════════════════ INDEXES ═══════════════════
@@ -98,6 +99,12 @@ def create_indexes():
     # scrims: lookup by scrim_id
     scrims.create_index("scrim_id", unique=True)
     scrims.create_index("status")
+
+    # global_teams: lookup by owner_id, by tier, leaderboard sorting
+    global_teams.create_index("owner_id", unique=True)
+    global_teams.create_index("team_key")
+    global_teams.create_index("current_tier")
+    global_teams.create_index([("current_tier", ASCENDING), ("total_points", DESCENDING)])
 
     print("✅ Database indexes ready.", flush=True)
 

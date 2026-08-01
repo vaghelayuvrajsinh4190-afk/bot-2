@@ -49,7 +49,13 @@ def build_roster_embed(group_doc, registrations, capacity):
     # Public counts exclude reserved slots for accurate display
     public_count = max(0, count - reserved_count)
     public_capacity = capacity - reserved_count
-    display_name = f"Group {group_id}"
+    # Build display name using scrim_id and group number
+    scrim_id = group_doc.get("scrim_id", "SQ")
+    try:
+        grp_num = int(group_id.lstrip("G"))
+    except (ValueError, AttributeError):
+        grp_num = 0
+    display_name = f"[{scrim_id.upper()}] GRP-{grp_num:02d}"
     status = Theme.group_status(count, capacity)
     color = Theme.group_color(count, capacity)
     bar = Theme.bar(public_count, public_capacity, 16)
@@ -154,8 +160,16 @@ def build_slot_availability_embed(groups, event_name="Scrims Qualifiers"):
         m1_start = m1.get("start", "TBD")
         m2_start = m2.get("start", "TBD")
 
+        # Build display name from scrim_id and group number
+        scrim_id = g.get("scrim_id", "SQ")
+        try:
+            grp_num = int(gid.lstrip("G"))
+        except (ValueError, AttributeError):
+            grp_num = 0
+        grp_display = f"[{scrim_id.upper()}] GRP-{grp_num:02d}"
+
         lines.append(
-            f"**✦ Group {gid}** ── {status}\n"
+            f"**✦ {grp_display}** ── {status}\n"
             f"  {bar}  `{pub_count}/{pub_cap} filled`\n"
             f"  ⏱ **Matchtimes:** `{m1_start}` │ `{m2_start}`"
         )
@@ -221,8 +235,16 @@ def build_registration_board_embed(groups=None, event_name="Daily Scrims"):
             else:
                 status_tag = ""
 
+            # Build display name from scrim_id and group number
+            scrim_id = g.get("scrim_id", "SQ")
+            try:
+                grp_num = int(gid.lstrip("G"))
+            except (ValueError, AttributeError):
+                grp_num = 0
+            grp_display = f"[{scrim_id.upper()}] GRP-{grp_num:02d}"
+
             group_lines.append(
-                f"{shift_emoji} **Group {gid}** — `{pub_count}/{pub_cap}` {circle_bar}{' ' + status_tag if status_tag else ''}\n"
+                f"{shift_emoji} **{grp_display}** — `{pub_count}/{pub_cap}` {circle_bar}{' ' + status_tag if status_tag else ''}\n"
                 f"   ⏱ M1: `{m1_start}` ({m1_map}) │ M2: `{m2_start}` ({m2_map})"
             )
     else:
@@ -316,6 +338,12 @@ def build_group_control_panel_embed(group_doc):
         group_doc: The group document from MongoDB
     """
     group_id = group_doc.get("group_id", "????")
+    scrim_id = group_doc.get("scrim_id", "SQ")
+    try:
+        grp_num = int(group_id.lstrip("G"))
+    except (ValueError, AttributeError):
+        grp_num = 0
+    grp_display = f"[{scrim_id.upper()}] GRP-{grp_num:02d}"
     m1 = group_doc.get("match1", {})
     m2 = group_doc.get("match2", {})
     count = group_doc.get("current_count", 0)
@@ -326,7 +354,7 @@ def build_group_control_panel_embed(group_doc):
     pub_cap = cap - reserved
 
     embed = make_embed(
-        f"⚙️ Group {group_id} — Control Panel",
+        f"⚙️ {grp_display} — Control Panel",
         f"{Theme.SEP}\n\n"
         f"╭── 🎮 **Match Info** ──╮\n"
         f"│  **M1:** `{m1.get('start', 'TBD')}` │ IDP `{m1.get('idp', 'TBD')}` │ `{m1.get('map', 'TBD')}`\n"
@@ -340,7 +368,7 @@ def build_group_control_panel_embed(group_doc):
         f"**Row 3** — Admin Only\n\n"
         f"{Theme.SEP}",
         Theme.PREMIUM,
-        f"Group {group_id} Panel │ Mack Bot"
+        f"{grp_display} Panel │ Mack Bot"
     )
     return embed
 
@@ -374,5 +402,81 @@ def build_provision_summary_embed(event_id, created_count, capacity,
         f"{Theme.SEP}",
         Theme.SUCCESS,
         f"Provisioned by {provisioned_by or 'Autopilot'} │ Scrim System"
+    )
+    return embed
+
+
+def build_global_leaderboard_embed(teams, tier_filter=None):
+    """
+    Build the global leaderboard embed for a tier.
+    """
+    tier_label = f"[{tier.upper()}] " if tier else "Global "
+    lines = []
+    
+    for i, t in enumerate(teams, 1):
+        team_name = t.get("team_name", "Unknown")
+        team_name = (team_name[:20] + '..') if len(team_name) > 20 else team_name
+        pts = t.get("total_points", 0)
+        kills = t.get("total_kills", 0)
+        matches = t.get("matches_played", 0)
+        wins = t.get("wins", 0)
+        
+        # Determine medal
+        medal = "🏅"
+        if i == 1: medal = "🥇"
+        elif i == 2: medal = "🥈"
+        elif i == 3: medal = "🥉"
+        
+        # Calculate KD (kills per match)
+        kd = round(kills / matches, 1) if matches > 0 else 0.0
+        
+        lines.append(
+            f"`{i:02d}` {medal} **{team_name}**\n"
+            f"       🏆 `{pts}` pts │ 💀 `{kills}` kills ({kd} K/M) │ 🍗 `{wins}` wins"
+        )
+        
+    board_text = "\n\n".join(lines) if lines else "*No teams have recorded points yet.*"
+    
+    embed = make_embed(
+        f"🌐 {tier_label}Leaderboard",
+        f"{Theme.SEP}\n\n{board_text}\n\n{Theme.SEP}",
+        Theme.PREMIUM,
+        f"Top {len(teams)} Teams │ Cross-Tier Tracking"
+    )
+    return embed
+
+
+def build_team_stats_embed(team_doc):
+    """
+    Build a detailed stats card for a single team globally.
+    """
+    team_name = team_doc.get("team_name", "Unknown")
+    owner_id = team_doc.get("owner_id", "")
+    tier = team_doc.get("current_tier", "T3")
+    
+    pts = team_doc.get("total_points", 0)
+    kills = team_doc.get("total_kills", 0)
+    matches = team_doc.get("matches_played", 0)
+    wins = team_doc.get("wins", 0)
+    no_shows = team_doc.get("no_shows", 0)
+    
+    kd = round(kills / matches, 1) if matches > 0 else 0.0
+    win_rate = round((wins / matches) * 100, 1) if matches > 0 else 0.0
+    
+    embed = make_embed(
+        f"📊 Team Profile: {team_name}",
+        f"**Owner:** <@{owner_id}>\n"
+        f"**Current Tier:** `[{tier}]`\n\n"
+        f"╭── 📈 **Global Statistics** ──╮\n"
+        f"│  🏆 **Total Points:** `{pts}`\n"
+        f"│  💀 **Total Kills:** `{kills}`\n"
+        f"│  ⚔️ **Matches Played:** `{matches}`\n"
+        f"│  🍗 **Match Wins:** `{wins}`\n"
+        f"╰─────────────────────────╯\n\n"
+        f"**Averages:** `{kd}` K/M │ `{win_rate}%` Win Rate\n"
+        f"**Strikes (No Shows):** `{no_shows}`\n\n"
+        f"{Theme.SEP}",
+        Theme.INFO,
+        "Mack Bot Global Tracking"
     )
     return embed

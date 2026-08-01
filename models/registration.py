@@ -149,35 +149,43 @@ def count_registrations(event_id: str, status="registered", scrim_id: str = None
     return registrations.count_documents(query)
 
 
-def is_already_registered(owner_id: str, event_id: str):
+def is_already_registered(owner_id: str, event_id: str, cross_tier_check_date: str = None):
     """Check if a user is already registered for today."""
-    return registrations.find_one({
+    query = {
         "owner_id": owner_id,
-        "event_id": event_id,
         "status": "registered"
-    }) is not None
+    }
+    if cross_tier_check_date:
+        # Match any event_id ending with the date (e.g., "T3_2026-08-01" or "SQ_2026-08-01")
+        query["event_id"] = {"$regex": f"{cross_tier_check_date}$"}
+    else:
+        query["event_id"] = event_id
+
+    return registrations.find_one(query) is not None
 
 
-def is_teammate_registered(user_id: str, event_id: str):
+def is_teammate_registered(user_id: str, event_id: str, cross_tier_check_date: str = None):
     """
     Check if a user is already part of any team (as owner or teammate) for today.
     Returns (is_registered, team_name or None).
     """
+    query_base = {"status": "registered"}
+    if cross_tier_check_date:
+        query_base["event_id"] = {"$regex": f"{cross_tier_check_date}$"}
+    else:
+        query_base["event_id"] = event_id
+
     # Check as owner
-    as_owner = registrations.find_one({
-        "owner_id": user_id,
-        "event_id": event_id,
-        "status": "registered"
-    })
+    owner_query = query_base.copy()
+    owner_query["owner_id"] = user_id
+    as_owner = registrations.find_one(owner_query)
     if as_owner:
         return True, as_owner.get("team_name")
 
     # Check as teammate
-    as_teammate = registrations.find_one({
-        "teammate_ids": user_id,
-        "event_id": event_id,
-        "status": "registered"
-    })
+    teammate_query = query_base.copy()
+    teammate_query["teammate_ids"] = user_id
+    as_teammate = registrations.find_one(teammate_query)
     if as_teammate:
         return True, as_teammate.get("team_name")
 

@@ -674,7 +674,7 @@ class ProvisioningCog(commands.Cog):
         # In 'shared' mode, create 1 single category for all group channels
         shared_category = None
         if channel_mode == "shared":
-            single_cat_name = settings.get("category_name") or f"📋 {scrim_id.upper()} SCRIMS"
+            single_cat_name = settings.get("category_name") or f"🏆・[{scrim_id.upper()}] SCRIMS"
             shared_category = discord.utils.get(guild.categories, name=single_cat_name)
             if not shared_category:
                 shared_category = await create_positioned_category(
@@ -702,7 +702,7 @@ class ProvisioningCog(commands.Cog):
                         number=group_num
                     )
                 except Exception:
-                    cat_name = f"{scrim_id.upper()} Group {group_num:02d}"
+                    cat_name = f"🏆・[{scrim_id.upper()}] GRP-{group_num:02d}"
 
                 target_pos = base_pos + i
                 group_cat = await create_positioned_category(
@@ -728,14 +728,15 @@ class ProvisioningCog(commands.Cog):
             match1 = sched.get("match1", {"idp": "TBD", "start": "TBD", "map": "TBD"}) if sched else {"idp": "TBD", "start": "TBD", "map": "TBD"}
             match2 = sched.get("match2", {"idp": "TBD", "start": "TBD", "map": "TBD"}) if sched else {"idp": "TBD", "start": "TBD", "map": "TBD"}
 
-            # Create role
-            role = await get_or_create_role(guild, f"{scrim_id.upper()}-{group_id}", discord.Color.blue())
+            # Create role with zero-padded minimalist format
+            role_name = f"[{scrim_id.upper()}] GRP-{i:02d}"
+            role = await get_or_create_role(guild, role_name, discord.Color.blue())
             if not role:
-                role = await get_or_create_role(guild, group_id, discord.Color.blue())
+                role = await get_or_create_role(guild, f"{scrim_id.upper()}-{group_id}", discord.Color.blue())
             await asyncio.sleep(0.5)
 
-            # Create channel inside the Group Category
-            channel_name = f"group-{i}"
+            # Create channel with zero-padded minimalist format
+            channel_name = f"⚔️・grp-{i:02d}-lobby"
             channel = await create_group_channel(guild, group_cat, channel_name, role)
             if not channel:
                 continue

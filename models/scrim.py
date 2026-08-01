@@ -32,6 +32,10 @@ DEFAULT_SETTINGS = {
     "reminder_lead_minutes": 30,
     "timezone_offset": 5.5,
     "channel_mode": "shared",  # "shared" or "separate"
+    "access_mode": "open",  # "open", "role", "whitelist", "role_or_whitelist"
+    "access_role_id": None,
+    "whitelist": [],
+    "cross_tier_registration": False,  # Allow registering in multiple tiers same day
 }
 
 DEFAULT_MODULES = {
