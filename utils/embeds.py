@@ -67,14 +67,12 @@ def build_roster_embed(group_doc, registrations, capacity):
     reserved_slots = group_doc.get("reserved_slots", 0)
     reserved_teams = group_doc.get("reserved_teams", {})
 
-    # Map public registrations by their slot number
+    # Map registrations by their assigned slot number
     reg_by_slot = {r.get("slot_number"): r for r in registrations if r.get("slot_number") is not None}
-    unassigned_regs = [r for r in registrations if r.get("slot_number") is None]
 
-    # Build roster lines
+    # Build roster lines — each slot maps directly to its assigned team
     slot_lines = []
-    for i in range(capacity):
-        slot_num = i + 1
+    for slot_num in range(1, capacity + 1):
         num = f"{slot_num:02d}"
         if slot_num <= reserved_slots:
             # Reserved slot
@@ -84,22 +82,16 @@ def build_roster_embed(group_doc, registrations, capacity):
                 slot_lines.append(f"`{num}` 🟢 **{team_name}** › *Reserved*")
             else:
                 slot_lines.append(f"`{num}` 🔴 **RESERVED**")
+        elif slot_num in reg_by_slot:
+            # Public registration with assigned slot
+            reg = reg_by_slot[slot_num]
+            tn = reg.get("team_name", "Unknown")
+            tn = (tn[:18] + '..') if len(tn) > 18 else tn
+            captain = reg.get("owner_id", "")
+            slot_lines.append(f"`{num}` 🟢 **{tn}** › <@{captain}>")
         else:
-            # Public registration slot
-            if slot_num in reg_by_slot:
-                reg = reg_by_slot[slot_num]
-                tn = reg.get("team_name", "Unknown")
-                tn = (tn[:18] + '..') if len(tn) > 18 else tn
-                captain = reg.get("owner_id", "")
-                slot_lines.append(f"`{num}` 🟢 **{tn}** › <@{captain}>")
-            elif unassigned_regs:
-                reg = unassigned_regs.pop(0)
-                tn = reg.get("team_name", "Unknown")
-                tn = (tn[:18] + '..') if len(tn) > 18 else tn
-                captain = reg.get("owner_id", "")
-                slot_lines.append(f"`{num}` 🟢 **{tn}** › <@{captain}>")
-            else:
-                slot_lines.append(f"`{num}` ⚪ *Available*")
+            # Open slot
+            slot_lines.append(f"`{num}` ⚪ *Available*")
 
     # Split into two columns if capacity > 8
     if capacity > 8:

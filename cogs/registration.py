@@ -423,17 +423,41 @@ class ConfirmRegistrationView(ui.View):
             )
             return
 
-        # Create registration asynchronously
+        # ── Find the first available slot number ──
+        group_id = assigned_group["group_id"]
+        capacity = assigned_group.get("capacity", 21)
+        reserved_slots = assigned_group.get("reserved_slots", 1)
+        start_slot = reserved_slots + 1
+        
+        existing_regs = await asyncio.to_thread(
+            reg_model.get_group_registrations, group_id, event_id
+        )
+        taken_slots = {r.get("slot_number") for r in existing_regs if r.get("slot_number") is not None}
+
+        available_slot = None
+        for i in range(start_slot, capacity + 1):  # Slots after reserved up to capacity
+            if i not in taken_slots:
+                available_slot = i
+                break
+
+        if available_slot is None:
+            await interaction.followup.send(
+                embed=error_embed("❌ No Slots Available", f"All slots in this group are taken. Please try another group."),
+                ephemeral=True
+            )
+            return
+
+        # Create registration with the correct slot number
         teammate_ids = [str(m.id) for m in self.selected_members]
         await asyncio.to_thread(
             reg_model.create_registration,
             owner_id=owner_id,
             event_id=event_id,
-            group_id=assigned_group["group_id"],
+            group_id=group_id,
             team_name=self.team_name,
             players=self.players,
             teammate_ids=teammate_ids,
-            slot_number=assigned_group["current_count"],
+            slot_number=available_slot,
             scrim_id=scrim_id
         )
 
@@ -461,7 +485,6 @@ class ConfirmRegistrationView(ui.View):
         # Get match details
         m1 = assigned_group.get("match1", {})
         m2 = assigned_group.get("match2", {})
-        group_id = assigned_group["group_id"]
 
         # Date display
         from cogs.provisioning import get_today_display
@@ -472,7 +495,7 @@ class ConfirmRegistrationView(ui.View):
             "🎯 Registration Complete!",
             f"🏆 **Team** — `{self.team_name}`\n"
             f"⚙️ **Assigned Group** — `{group_id}`\n"
-            f"🎰 **Roster Slot** — `Slot {assigned_group['current_count']:02d}`\n"
+            f"🎰 **Roster Slot** — `Slot {available_slot:02d}`\n"
             f"📅 **Date** — `{event_date_display}`\n\n"
 
             f"╭── 🎮 **Match Schedule** ──╮\n"

@@ -9,6 +9,7 @@ import datetime
 import copy
 import json
 import os
+import traceback
 from database import scrims as scrims_collection
 from config import DEFAULT_GROUP_CAPACITY, DEFAULT_GROUP_COUNT, DEFAULT_RESERVED_SLOTS, DEFAULT_POSITION_POINTS, TIMEZONE_OFFSET
 
@@ -369,4 +370,5 @@ def is_group_started_or_finished(scrim_id: str, group_number: int) -> bool:
 
     except Exception as e:
         print(f"⚠️ is_group_started_or_finished error: {e}", flush=True)
+        traceback.print_exc()
         return False
