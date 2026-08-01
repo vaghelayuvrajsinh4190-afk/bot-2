@@ -790,12 +790,12 @@ class ProvisioningCog(commands.Cog):
                     except discord.NotFound:
                         pass
 
-        if reg_in_category:
+        if reg_target_channel:
             cat_reg_msg_id = await asyncio.to_thread(get_config, f"category_reg_msg_{event_id}")
             if cat_reg_msg_id:
                 try:
                     embed = build_registration_board_embed(all_groups, event_name=scrim_name)
-                    cat_msg = await reg_in_category.fetch_message(cat_reg_msg_id)
+                    cat_msg = await reg_target_channel.fetch_message(cat_reg_msg_id)
                     await cat_msg.edit(embed=embed)
                 except discord.NotFound:
                     pass
