@@ -11,7 +11,7 @@ import datetime
 from models import global_teams
 from database import get_channel_config
 from utils.embeds import make_embed, Theme, success_embed, error_embed
-from utils.permissions import admin_only
+
 
 class GlobalTracker(commands.Cog):
     def __init__(self, bot):

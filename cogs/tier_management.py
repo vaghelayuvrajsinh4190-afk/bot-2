@@ -11,7 +11,6 @@ import datetime
 from models import global_teams
 from database import get_channel_config
 from utils.embeds import make_embed, Theme, success_embed, error_embed
-from utils.permissions import admin_only
 
 class TierManagement(commands.Cog):
     def __init__(self, bot):
@@ -44,7 +43,7 @@ class TierManagement(commands.Cog):
         from_tier="Current tier (e.g. T3)",
         to_tier="New tier (e.g. T2)"
     )
-    @admin_only()
+    @app_commands.default_permissions(administrator=True)
     async def promote_team_cmd(
         self, interaction: discord.Interaction, owner: discord.Member, from_tier: str, to_tier: str
     ):
@@ -84,7 +83,7 @@ class TierManagement(commands.Cog):
         from_tier="Current tier (e.g. T2)",
         to_tier="New tier (e.g. T3)"
     )
-    @admin_only()
+    @app_commands.default_permissions(administrator=True)
     async def demote_team_cmd(
         self, interaction: discord.Interaction, owner: discord.Member, from_tier: str, to_tier: str
     ):
@@ -118,7 +117,7 @@ class TierManagement(commands.Cog):
 
     @tier_group.command(name="review", description="Review candidates for promotion and demotion")
     @app_commands.describe(tier="The tier to review (e.g. T3 for top T3s, T2 for bottom T2s)")
-    @admin_only()
+    @app_commands.default_permissions(administrator=True)
     async def tier_review(self, interaction: discord.Interaction, tier: str):
         await interaction.response.defer()
         
