@@ -24,7 +24,7 @@ from config import (
     REGISTRATION_OPEN_HOUR, REGISTRATION_OPEN_MINUTE,
     load_schedule, save_schedule, get_schedule_for_group,
     get_effective_channel
-)
+
 )
 from utils.embeds import (
     make_embed, error_embed, success_embed,
