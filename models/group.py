@@ -80,6 +80,29 @@ def claim_slot(event_id: str, scrim_id: str = "SQ"):
     )
     return result
 
+
+def claim_specific_slot(event_id: str, group_id: str, scrim_id: str = "SQ"):
+    """
+    Atomically claim a slot in a specific group.
+    Used when the registration loop has already validated the group
+    (time check, channel existence, capacity).
+
+    Returns the updated group doc, or None if the group is full/locked.
+    """
+    result = groups.find_one_and_update(
+        {
+            "scrim_id": scrim_id,
+            "event_id": event_id,
+            "group_id": group_id,
+            "archived": {"$ne": True},
+            "locked": {"$ne": True},
+            "$expr": {"$lt": ["$current_count", "$capacity"]}
+        },
+        {"$inc": {"current_count": 1}},
+        return_document=ReturnDocument.AFTER
+    )
+    return result
+
 def release_slot(event_id: str, group_id: str):
     """
     Decrement the count when a team cancels.

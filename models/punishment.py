@@ -7,7 +7,7 @@ import datetime
 from database import punishments
 
 
-def ban_user(owner_id: str, username: str, reason: str, days: int, banned_by: str, scrim_id: str = "SQ"):
+def ban_user(owner_id: str, username: str, reason: str, days: int, banned_by: str, scrim_id: str = None):
     """
     Ban a user. days=0 means permanent.
     
@@ -17,7 +17,7 @@ def ban_user(owner_id: str, username: str, reason: str, days: int, banned_by: st
         reason: Ban reason
         days: Duration in days (0 = permanent)
         banned_by: Admin who issued the ban
-        scrim_id: Scrim identifier (default "SQ")
+        scrim_id: Scrim identifier (required)
     """
     if days == 0:
         expires_at = "never"

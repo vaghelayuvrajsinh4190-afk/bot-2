@@ -7,8 +7,10 @@ schedule, groups, registrations, points, channels, and settings.
 
 import datetime
 import copy
+import json
+import os
 from database import scrims as scrims_collection
-from config import DEFAULT_GROUP_CAPACITY, DEFAULT_GROUP_COUNT, DEFAULT_RESERVED_SLOTS, DEFAULT_POSITION_POINTS
+from config import DEFAULT_GROUP_CAPACITY, DEFAULT_GROUP_COUNT, DEFAULT_RESERVED_SLOTS, DEFAULT_POSITION_POINTS, TIMEZONE_OFFSET
 
 
 # ═══════════════════ DEFAULT SCRIM TEMPLATE ═══════════════════
@@ -52,6 +54,7 @@ DEFAULT_MODULES = {
     "auto_archive": False,
     "auto_leaderboard": False,
     "auto_results": False,
+    "autopilot": True,
 }
 
 DEFAULT_CHANNELS = {
@@ -304,3 +307,66 @@ def get_scrim_color(scrim_id: str):
         return int(hex_color.lstrip("#"), 16)
     except (ValueError, AttributeError):
         return 0xBF5AF2  # Default purple
+
+
+# ═══════════════════ TIME VALIDATION ═══════════════════
+
+
+def is_group_started_or_finished(scrim_id: str, group_number: int) -> bool:
+    """
+    Check if a group's match has already started or finished.
+    Loads schedule.json, looks up the scrim_id, finds the group_number,
+    parses match1.start time, and returns True if current IST time > match time.
+
+    Args:
+        scrim_id: Scrim identifier (e.g. "SQ", "T3")
+        group_number: 1-based group number
+
+    Returns:
+        True if the group's match1 has started/finished, False otherwise.
+        Returns False on any error (fail-safe: allow registration).
+    """
+    try:
+        schedule_file = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "schedule.json"
+        )
+        with open(schedule_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        scrim_key = scrim_id.upper() if scrim_id else "SQ"
+        scrim_data = data.get(scrim_key)
+        if not scrim_data:
+            return False
+
+        groups_list = scrim_data.get("groups", [])
+        target_group = None
+        for g in groups_list:
+            if g.get("group_number") == group_number:
+                target_group = g
+                break
+
+        if not target_group:
+            return False
+
+        start_str = target_group.get("match1", {}).get("start")
+        if not start_str:
+            return False
+
+        # Parse "HH:MM AM/PM" into today's datetime with IST offset
+        utc_now = datetime.datetime.utcnow()
+        ist_now = utc_now + datetime.timedelta(hours=TIMEZONE_OFFSET)
+
+        parsed_time = datetime.datetime.strptime(start_str, "%I:%M %p")
+        match_dt = ist_now.replace(
+            hour=parsed_time.hour,
+            minute=parsed_time.minute,
+            second=0,
+            microsecond=0
+        )
+
+        return ist_now > match_dt
+
+    except Exception as e:
+        print(f"⚠️ is_group_started_or_finished error: {e}", flush=True)
+        return False

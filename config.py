@@ -66,10 +66,11 @@ SCHEDULE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "schedu
 def load_schedule(scrim_id: str = None):
     """
     Load the daily schedule.
-    If scrim_id is provided, loads from the scrim's own schedule.
+    If scrim_id is provided, loads from the scrim's own schedule in MongoDB,
+    then falls back to schedule.json (per-scrim nested format).
     Otherwise falls back to global MongoDB config, then schedule.json.
     """
-    # Try per-scrim schedule first
+    # Try per-scrim schedule from MongoDB first
     if scrim_id:
         try:
             from models.scrim import get_scrim_schedule
@@ -88,11 +89,21 @@ def load_schedule(scrim_id: str = None):
     except Exception as e:
         print(f"⚠️ Failed to load schedule from MongoDB: {e}", flush=True)
 
-    # Fallback: read from schedule.json (first-time migration)
+    # Fallback: read from schedule.json (per-scrim nested format)
     try:
         with open(SCHEDULE_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
-        groups_data = data.get("groups", [])
+
+        # New per-scrim nested format: {"SQ": {"groups": [...]}, "T3": {"groups": [...]}}
+        if scrim_id and scrim_id.upper() in data:
+            groups_data = data[scrim_id.upper()].get("groups", [])
+        elif "groups" in data:
+            # Legacy flat format: {"groups": [...]}
+            groups_data = data.get("groups", [])
+        else:
+            # Default: try SQ key as fallback
+            groups_data = data.get("SQ", {}).get("groups", [])
+
         # Auto-migrate to MongoDB for persistence
         try:
             from database import set_config
@@ -112,17 +123,32 @@ def load_schedule(scrim_id: str = None):
 def save_schedule(groups_data, scrim_id: str = None):
     """
     Save updated schedule data.
-    If scrim_id is provided, saves to the scrim's own schedule.
+    If scrim_id is provided, saves to the scrim's own schedule in MongoDB
+    and updates the per-scrim key in schedule.json.
     Otherwise saves to global MongoDB config.
     """
     if scrim_id:
         try:
             from models.scrim import set_scrim_schedule
             set_scrim_schedule(scrim_id, groups_data)
-            return True
         except Exception as e:
             print(f"❌ Failed to save schedule for scrim {scrim_id}: {e}", flush=True)
             return False
+
+        # Also update schedule.json with per-scrim nested format
+        try:
+            existing = {}
+            try:
+                with open(SCHEDULE_FILE, "r", encoding="utf-8") as f:
+                    existing = json.load(f)
+            except (FileNotFoundError, json.JSONDecodeError):
+                pass
+            existing[scrim_id.upper()] = {"groups": groups_data}
+            with open(SCHEDULE_FILE, "w", encoding="utf-8") as f:
+                json.dump(existing, f, indent=2, ensure_ascii=False)
+        except Exception:
+            pass  # Non-fatal
+        return True
 
     try:
         from database import set_config
@@ -131,22 +157,31 @@ def save_schedule(groups_data, scrim_id: str = None):
         print(f"❌ Failed to save schedule to MongoDB: {e}", flush=True)
         return False
 
-    # Also write to local file as backup (best-effort)
+    # Also write to local file as backup (best-effort, per-scrim format)
     try:
+        existing = {}
+        try:
+            with open(SCHEDULE_FILE, "r", encoding="utf-8") as f:
+                existing = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            pass
+        # Store under "SQ" key as default when no scrim_id specified
+        existing["SQ"] = {"groups": groups_data}
         with open(SCHEDULE_FILE, "w", encoding="utf-8") as f:
-            json.dump({"groups": groups_data}, f, indent=4, ensure_ascii=False)
+            json.dump(existing, f, indent=2, ensure_ascii=False)
     except Exception:
         pass  # Non-fatal — MongoDB is the source of truth now
 
     return True
 
 
-def get_schedule_for_group(group_number: int):
+def get_schedule_for_group(group_number: int, scrim_id: str = None):
     """
     Get the schedule entry for a specific group number (1-based).
+    If scrim_id is provided, loads that scrim's schedule.
     Returns dict with match1/match2 or None if not found.
     """
-    schedule = load_schedule()
+    schedule = load_schedule(scrim_id)
     for entry in schedule:
         if entry.get("group_number") == group_number:
             return entry

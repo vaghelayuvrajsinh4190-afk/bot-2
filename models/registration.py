@@ -10,7 +10,7 @@ from database import registrations
 
 def create_registration(owner_id: str, event_id: str, group_id: str,
                         team_name: str, players: list, teammate_ids: list,
-                        slot_number: int = None, scrim_id: str = "SQ"):
+                        slot_number: int = None, scrim_id: str = None):
     """
     Insert a new registration.
     
@@ -22,7 +22,7 @@ def create_registration(owner_id: str, event_id: str, group_id: str,
         players: List of player in-game names
         teammate_ids: List of Discord user IDs of teammates
         slot_number: The roster slot number assigned to this team
-        scrim_id: Scrim identifier (default "SQ")
+        scrim_id: Scrim identifier (required)
     """
     doc = {
         "scrim_id": scrim_id,
@@ -127,20 +127,26 @@ def mark_no_show(owner_id: str, event_id: str):
     )
 
 
-def get_all_registrations(event_id: str, status="registered"):
-    """Get all registrations for an event with a given status."""
-    return list(registrations.find({
+def get_all_registrations(event_id: str, status="registered", scrim_id: str = None):
+    """Get all registrations for an event with a given status, optionally filtered by scrim_id."""
+    query = {
         "event_id": event_id,
         "status": status
-    }))
+    }
+    if scrim_id:
+        query["scrim_id"] = scrim_id
+    return list(registrations.find(query))
 
 
-def count_registrations(event_id: str, status="registered"):
-    """Count registrations for an event."""
-    return registrations.count_documents({
+def count_registrations(event_id: str, status="registered", scrim_id: str = None):
+    """Count registrations for an event, optionally filtered by scrim_id."""
+    query = {
         "event_id": event_id,
         "status": status
-    })
+    }
+    if scrim_id:
+        query["scrim_id"] = scrim_id
+    return registrations.count_documents(query)
 
 
 def is_already_registered(owner_id: str, event_id: str):

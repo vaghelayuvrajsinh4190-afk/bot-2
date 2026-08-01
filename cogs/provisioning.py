@@ -10,6 +10,7 @@ Handles the full autopilot system:
 
 import datetime
 import asyncio
+import os
 import json
 import discord
 from discord.ext import commands, tasks
@@ -78,6 +79,8 @@ class ProvisioningCog(commands.Cog):
         Master autopilot loop — checks every minute for:
         1. Midnight Reset (00:00 IST) — respects 'midnight_reset' toggle
         2. Registration Open (10:00 AM IST) — respects 'auto_registration_open' toggle
+
+        Iterates over all active scrims and respects per-scrim 'autopilot' module toggle.
         """
         utc_now = datetime.datetime.utcnow()
         local_now = utc_now + datetime.timedelta(hours=TIMEZONE_OFFSET)
@@ -88,27 +91,75 @@ class ProvisioningCog(commands.Cog):
 
         guild = self.bot.guilds[0]
 
-        # ─────── MIDNIGHT RESET (00:00 IST) ───────
-        if local_now.hour == 0 and local_now.minute == 0:
-            midnight_enabled = await asyncio.to_thread(get_config, "midnight_reset", True)
-            if midnight_enabled:
-                last_reset = await asyncio.to_thread(get_config, "last_reset_date", "")
-                if last_reset != today_str:
-                    await self._midnight_reset(guild, local_now)
-                    await asyncio.to_thread(set_config, "last_reset_date", today_str)
-            else:
-                print("🔘 Midnight reset is DISABLED via config. Skipping.", flush=True)
+        # ─────── Fetch all active scrims ───────
+        from models.scrim import get_active_scrims
+        try:
+            active_scrims = await asyncio.to_thread(get_active_scrims)
+        except Exception as e:
+            print(f"⚠️ Autopilot: Failed to fetch active scrims: {e}", flush=True)
+            active_scrims = []
 
-        # ─────── REGISTRATION OPEN (10:00 AM IST or Admin Configured) ───────
-        auto_reg_enabled = await asyncio.to_thread(get_config, "auto_registration_open", True)
-        if auto_reg_enabled:
-            open_hour = await asyncio.to_thread(get_config, "registration_open_hour", REGISTRATION_OPEN_HOUR)
-            open_minute = await asyncio.to_thread(get_config, "registration_open_minute", REGISTRATION_OPEN_MINUTE)
-            if local_now.hour == open_hour and local_now.minute == open_minute:
-                last_open = await asyncio.to_thread(get_config, "last_open_date", "")
-                if last_open != today_str:
-                    await self._registration_open(guild)
-                    await asyncio.to_thread(set_config, "last_open_date", today_str)
+        # If no scrims are configured, fall back to legacy global behavior
+        if not active_scrims:
+            # ─────── LEGACY MIDNIGHT RESET (00:00 IST) ───────
+            if local_now.hour == 0 and local_now.minute == 0:
+                midnight_enabled = await asyncio.to_thread(get_config, "midnight_reset", True)
+                if midnight_enabled:
+                    last_reset = await asyncio.to_thread(get_config, "last_reset_date", "")
+                    if last_reset != today_str:
+                        await self._midnight_reset(guild, local_now)
+                        await asyncio.to_thread(set_config, "last_reset_date", today_str)
+
+            # ─────── LEGACY REGISTRATION OPEN ───────
+            auto_reg_enabled = await asyncio.to_thread(get_config, "auto_registration_open", True)
+            if auto_reg_enabled:
+                open_hour = await asyncio.to_thread(get_config, "registration_open_hour", REGISTRATION_OPEN_HOUR)
+                open_minute = await asyncio.to_thread(get_config, "registration_open_minute", REGISTRATION_OPEN_MINUTE)
+                if local_now.hour == open_hour and local_now.minute == open_minute:
+                    last_open = await asyncio.to_thread(get_config, "last_open_date", "")
+                    if last_open != today_str:
+                        await self._registration_open(guild)
+                        await asyncio.to_thread(set_config, "last_open_date", today_str)
+            return
+
+        # ─────── PER-SCRIM AUTOPILOT ───────
+        for scrim in active_scrims:
+            scrim_id = scrim.get("scrim_id", "")
+            if not scrim_id:
+                continue
+
+            # Check if autopilot module is enabled for this scrim
+            autopilot_enabled = scrim.get("modules", {}).get("autopilot", True)
+            if not autopilot_enabled:
+                continue
+
+            try:
+                # ─────── MIDNIGHT RESET (00:00 IST) per scrim ───────
+                if local_now.hour == 0 and local_now.minute == 0:
+                    midnight_enabled = await asyncio.to_thread(get_config, "midnight_reset", True)
+                    if midnight_enabled:
+                        reset_key = f"last_reset_date_{scrim_id}"
+                        last_reset = await asyncio.to_thread(get_config, reset_key, "")
+                        if last_reset != today_str:
+                            await self._midnight_reset(guild, local_now)
+                            await asyncio.to_thread(set_config, reset_key, today_str)
+                    else:
+                        print(f"🔘 Midnight reset is DISABLED via config for {scrim_id}. Skipping.", flush=True)
+
+                # ─────── REGISTRATION OPEN per scrim ───────
+                auto_reg_enabled = await asyncio.to_thread(get_config, "auto_registration_open", True)
+                if auto_reg_enabled:
+                    open_hour = await asyncio.to_thread(get_config, "registration_open_hour", REGISTRATION_OPEN_HOUR)
+                    open_minute = await asyncio.to_thread(get_config, "registration_open_minute", REGISTRATION_OPEN_MINUTE)
+                    if local_now.hour == open_hour and local_now.minute == open_minute:
+                        open_key = f"last_open_date_{scrim_id}"
+                        last_open = await asyncio.to_thread(get_config, open_key, "")
+                        if last_open != today_str:
+                            await self._registration_open(guild)
+                            await asyncio.to_thread(set_config, open_key, today_str)
+
+            except Exception as e:
+                print(f"⚠️ Autopilot error for scrim '{scrim_id}': {e}", flush=True)
 
     @autopilot_loop.before_loop
     async def before_autopilot(self):
@@ -1102,6 +1153,131 @@ class ProvisioningCog(commands.Cog):
         else:
             await interaction.response.send_message(
                 embed=error_embed("❌ Save Failed", "Could not write to schedule.json."),
+                ephemeral=True
+            )
+
+    # ─────────────── /add_schedule COMMAND ───────────────
+
+    @app_commands.command(
+        name="add_schedule",
+        description="[Admin] Add or update a group schedule entry for a specific scrim"
+    )
+    @app_commands.describe(
+        scrim_id="Scrim identifier (e.g. SQ, T3)",
+        group_number="Group number (1-based)",
+        shift="Shift name (e.g. day, evening)",
+        match1_start="Match 1 start time (e.g. 06:00 PM)",
+        match1_map="Match 1 map name (e.g. ERANGEL)",
+        match2_start="Match 2 start time (e.g. 06:40 PM)",
+        match2_map="Match 2 map name (e.g. RONDO)"
+    )
+    @app_commands.checks.has_permissions(administrator=True)
+    async def add_schedule_cmd(
+        self,
+        interaction: discord.Interaction,
+        scrim_id: str,
+        group_number: int,
+        shift: str,
+        match1_start: str,
+        match1_map: str,
+        match2_start: str,
+        match2_map: str
+    ):
+        """Add or overwrite a group's schedule entry for a specific scrim."""
+        scrim_key = scrim_id.strip().upper()
+
+        def _subtract_6_minutes(time_str: str) -> str:
+            """Subtract 6 minutes from a time string like '06:00 PM' to get IDP time."""
+            try:
+                dt = datetime.datetime.strptime(time_str.strip(), "%I:%M %p")
+                dt -= datetime.timedelta(minutes=6)
+                return dt.strftime("%I:%M %p")
+            except ValueError:
+                return time_str  # Return as-is if parsing fails
+
+        # Calculate IDP times (start - 6 minutes)
+        match1_idp = _subtract_6_minutes(match1_start)
+        match2_idp = _subtract_6_minutes(match2_start)
+
+        # Build the group entry
+        group_entry = {
+            "group_number": group_number,
+            "shift": shift.strip().lower(),
+            "match1": {
+                "idp": match1_idp,
+                "start": match1_start.strip(),
+                "map": match1_map.strip().upper()
+            },
+            "match2": {
+                "idp": match2_idp,
+                "start": match2_start.strip(),
+                "map": match2_map.strip().upper()
+            }
+        }
+
+        # Load, update, and save schedule.json
+        try:
+            schedule_file = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                "schedule.json"
+            )
+
+            # Load existing data
+            existing = {}
+            try:
+                with open(schedule_file, "r", encoding="utf-8") as f:
+                    existing = json.load(f)
+            except (FileNotFoundError, json.JSONDecodeError):
+                pass
+
+            # Create scrim key if missing
+            if scrim_key not in existing:
+                existing[scrim_key] = {"groups": []}
+
+            groups_list = existing[scrim_key].get("groups", [])
+
+            # Overwrite if group_number exists, otherwise append
+            replaced = False
+            for idx, g in enumerate(groups_list):
+                if g.get("group_number") == group_number:
+                    groups_list[idx] = group_entry
+                    replaced = True
+                    break
+
+            if not replaced:
+                groups_list.append(group_entry)
+
+            # Sort by group_number
+            groups_list.sort(key=lambda g: g.get("group_number", 0))
+            existing[scrim_key]["groups"] = groups_list
+
+            # Save to schedule.json
+            with open(schedule_file, "w", encoding="utf-8") as f:
+                json.dump(existing, f, indent=2, ensure_ascii=False)
+
+            action = "Updated" if replaced else "Added"
+            embed = make_embed(
+                f"✅ Schedule {action}",
+                f"{Theme.SEP}\n\n"
+                f"**Scrim:** `{scrim_key}`\n"
+                f"**Group:** `{group_number}`\n"
+                f"**Shift:** `{shift.strip().lower()}`\n\n"
+                f"╭── 🎮 **Match 1** ──╮\n"
+                f"│  ⏰ IDP: `{match1_idp}` │ Start: `{match1_start.strip()}`\n"
+                f"│  🗺️ Map: `{match1_map.strip().upper()}`\n"
+                f"╰────────────────────╯\n\n"
+                f"╭── 🎮 **Match 2** ──╮\n"
+                f"│  ⏰ IDP: `{match2_idp}` │ Start: `{match2_start.strip()}`\n"
+                f"│  🗺️ Map: `{match2_map.strip().upper()}`\n"
+                f"╰────────────────────╯\n\n"
+                f"📝 Saved to `schedule.json` — IDP auto-calculated (start - 6min).\n\n{Theme.SEP}",
+                Theme.SUCCESS
+            )
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+
+        except Exception as e:
+            await interaction.response.send_message(
+                embed=error_embed("❌ Error", f"Failed to update schedule: {e}"),
                 ephemeral=True
             )
 

@@ -375,11 +375,50 @@ class ConfirmRegistrationView(ui.View):
 
         await interaction.response.defer(ephemeral=True)
 
-        # Atomic slot claim asynchronously
-        assigned_group = await asyncio.to_thread(group_model.claim_slot, event_id, self.scrim_id or "SQ")
+        # ── Enhanced group assignment with time, channel, and capacity validation ──
+        from models.scrim import is_group_started_or_finished
+
+        assigned_group = None
+        scrim_id = self.scrim_id or "SQ"
+        guild = interaction.guild
+
+        for grp in available_groups:
+            group_id_candidate = grp["group_id"]
+
+            # Extract group number from group_id (e.g. "G0001" → 1)
+            try:
+                group_number = int(group_id_candidate.lstrip("G"))
+            except (ValueError, AttributeError):
+                group_number = 0
+
+            # Check 1: Time validation — skip if match already started
+            if group_number > 0:
+                started = await asyncio.to_thread(
+                    is_group_started_or_finished, scrim_id, group_number
+                )
+                if started:
+                    continue
+
+            # Check 2: Channel ID must exist in the group doc (provisioned)
+            channel_id = grp.get("channel_id")
+            if not channel_id:
+                continue
+
+            # Check 3: Discord channel must still exist (not deleted by admin)
+            discord_channel = guild.get_channel(channel_id)
+            if discord_channel is None:
+                continue
+
+            # All checks passed — atomically claim this specific group
+            assigned_group = await asyncio.to_thread(
+                group_model.claim_specific_slot, event_id, group_id_candidate, scrim_id
+            )
+            if assigned_group:
+                break  # Successfully claimed
+
         if not assigned_group:
             await interaction.followup.send(
-                embed=error_embed("❌ Claim Failed", "All groups filled up while processing your request."),
+                embed=error_embed("❌ Claim Failed", "All groups filled up while processing your request, or no eligible groups remain."),
                 ephemeral=True
             )
             return
@@ -395,7 +434,7 @@ class ConfirmRegistrationView(ui.View):
             players=self.players,
             teammate_ids=teammate_ids,
             slot_number=assigned_group["current_count"],
-            scrim_id=self.scrim_id or "SQ"
+            scrim_id=scrim_id
         )
 
         # Save teammate IDs to profile asynchronously
