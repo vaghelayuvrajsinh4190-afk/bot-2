@@ -194,12 +194,23 @@ def build_registration_board_embed(groups=None, event_name="Daily Scrims"):
     """
     Build the permanent registration board embed for #register-here.
     This is the board that persists across days and gets reset at midnight.
-    Tier-1 tournament-style visual design.
+    REGISTRATION PORTAL - tournament-style visual design.
 
     Args:
         groups: Optional list of group documents. If None, shows empty board.
         event_name: Display name for the event
     """
+    from config import TIMEZONE_OFFSET
+
+    # Get today's date in IST for "Group NNN - 2 Aug" display
+    utc_now = datetime.datetime.utcnow()
+    local_now = utc_now + datetime.timedelta(hours=TIMEZONE_OFFSET)
+    try:
+        date_display = local_now.strftime("%-d %b")
+    except ValueError:
+        # Windows doesn't support %-d, use %d and strip leading zero
+        date_display = local_now.strftime("%d %b").lstrip("0")
+
     total_filled = 0
     total_capacity = 0
     group_lines = []
@@ -216,72 +227,70 @@ def build_registration_board_embed(groups=None, event_name="Daily Scrims"):
             total_filled += pub_count
             total_capacity += pub_cap
 
-            circle_bar = Theme.slot_bar(pub_count, pub_cap, 10)
+            # Circle-dot progress bar
+            dot_bar = Theme.circle_bar(pub_count, pub_cap, 12)
+
+            # IDP-based timing instead of start times
             m1 = g.get("match1", {})
             m2 = g.get("match2", {})
-            m1_map = m1.get("map", "TBD")
-            m1_start = m1.get("start", "TBD")
-            m2_map = m2.get("map", "TBD")
-            m2_start = m2.get("start", "TBD")
+            m1_idp = m1.get("idp", m1.get("start", "TBD"))
+            m2_idp = m2.get("idp", m2.get("start", "TBD"))
 
-            shift = g.get("shift", "")
-            shift_emoji = "☀️" if shift == "day" else "🌙" if shift == "evening" else "📍"
-
-            # Status indicator
-            if count >= cap:
-                status_tag = "```diff\n- FULL\n```"
-            elif count >= cap * 0.75:
-                status_tag = "```fix\nAlmost Full\n```"
-            else:
-                status_tag = ""
-
-            # Build display name from scrim_id and group number
-            scrim_id = g.get("scrim_id", "SQ")
+            # Extract group number for "Group NNN - Date" format
             try:
                 grp_num = int(gid.lstrip("G"))
             except (ValueError, AttributeError):
                 grp_num = 0
-            grp_display = f"[{scrim_id.upper()}] GRP-{grp_num:02d}"
+
+            # Status emoji based on fill ratio
+            if count >= cap:
+                status_emoji = "\U0001f534"
+            elif count >= cap * 0.75:
+                status_emoji = "\U0001f7e1"
+            else:
+                status_emoji = "\U0001f7e2"
 
             group_lines.append(
-                f"{shift_emoji} **{grp_display}** — `{pub_count}/{pub_cap}` {circle_bar}{' ' + status_tag if status_tag else ''}\n"
-                f"   ⏱ M1: `{m1_start}` ({m1_map}) │ M2: `{m2_start}` ({m2_map})"
+                f"{status_emoji} **Group {grp_num} \u2014 {date_display}**\n"
+                f"\U0001f552 **IDP:** M1: `{m1_idp}` | M2: `{m2_idp}`\n"
+                f"{dot_bar} {pub_count}/{pub_cap} filled"
             )
     else:
         total_capacity = 1  # Avoid division by zero
-
-    overall_bar = Theme.slot_bar(total_filled, total_capacity, 12)
 
     if group_lines:
         groups_text = "\n\n".join(group_lines)
     else:
         groups_text = (
-            "```\n"
-            "  ○○○○○○○○○○  0/0 filled\n"
-            "\n"
-            "  No groups provisioned yet.\n"
-            "  Check back later!\n"
-            "```"
+            "`\u26aa\u26aa\u26aa\u26aa\u26aa\u26aa\u26aa\u26aa\u26aa\u26aa\u26aa\u26aa` 0/0 filled\n\n"
+            "*No groups provisioned yet. Check back later!*"
         )
 
-    slots_remaining = total_capacity - total_filled if groups else 0
-
-    embed = make_embed(
-        f"🏟️ {event_name} — Registration Board",
-        f"📊 **Slots Claimed:** `{total_filled}/{total_capacity}` │ "
-        f"**Remaining:** `{slots_remaining}`\n"
-        f"▓ **Overall Progress:**\n{overall_bar}\n\n"
-        f"{Theme.THIN_SEP}\n\n"
-        f"{groups_text}\n\n"
-        f"{Theme.THIN_SEP}\n"
-        f"👇 Click **📥 Register Team** below to claim your slot!\n"
-        f"*Registration is first-come, first-served.*\n\n"
-        f"{Theme.SEP}",
-        Theme.PREMIUM,
-        "🔄 Auto-updates │ Dynamic Scrims"
+    # Instructional header + rules + group slots
+    description = (
+        "Welcome to the official registration system for the upcoming qualifiers. "
+        "Please read the instructions carefully before claiming your slot.\n\n"
+        "**\U0001f4dd How to Register:**\n"
+        "**1.** Click the \U0001f4e5 **Register Team** button below.\n"
+        "**2.** Fill out the form with your Team Name and IGL details.\n"
+        "**3.** Make sure your in-game Character IDs are ready.\n"
+        "**4.** Submit to instantly lock in your slot.\n\n"
+        "**\u26a0\ufe0f Important Rules:**\n"
+        "\u2022 Slots are strictly **first-come, first-served**.\n"
+        "\u2022 Spamming the form will result in a server ban.\n"
+        "\u2022 Roster changes are not allowed after submission.\n\n"
+        f"**\U0001f4ca Current Slot Status:**\n"
+        f"{groups_text}"
     )
-    return embed
 
+    embed = discord.Embed(
+        title="\U0001f3c6 REGISTRATION PORTAL",
+        description=description,
+        color=Theme.REGISTRATION,
+        timestamp=datetime.datetime.utcnow()
+    )
+    embed.set_footer(text="Secure your slot now")
+    return embed
 
 def build_registration_receipt_embed(team_name, group_id, players,
                                       player_uids, player_igns,

@@ -204,6 +204,7 @@ class Theme:
     ROSE      = discord.Color.from_rgb(255, 55, 127)  # electric rose
     GOLD      = discord.Color.from_rgb(255, 215, 0)   # pure gold
     CRIMSON   = discord.Color.from_rgb(255, 69, 58)   # crimson
+    REGISTRATION = discord.Color.from_rgb(230, 81, 0) # registration orange
 
     # Visual separators
     SEP       = "✦ ─────────────────── ✦"
@@ -220,6 +221,12 @@ class Theme:
 
     # Alias slot_bar to bar to prevent duplication
     slot_bar = bar
+
+    @staticmethod
+    def circle_bar(current, maximum, length=12):
+        """Generate a circle-dot progress bar using 🔘 (filled) and ⚪ (empty)."""
+        filled = int((current / maximum) * length) if maximum else 0
+        return "`" + "🔘" * filled + "⚪" * (length - filled) + "`"
 
     @staticmethod
     def group_color(count, mx):
