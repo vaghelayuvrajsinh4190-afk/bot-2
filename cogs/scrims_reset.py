@@ -226,6 +226,11 @@ class ScrimsResetCog(commands.Cog):
             reset_time = config.get("reset_time_utc", {})
             reset_hour = reset_time.get("hour")
             reset_minute = reset_time.get("minute")
+            
+            # Check if auto-reset is enabled for this scrim
+            auto_reset = config.get("auto_reset", True)
+            if not auto_reset:
+                continue
 
             # Skip malformed entries
             if reset_hour is None or reset_minute is None:
@@ -423,6 +428,76 @@ class ScrimsResetCog(commands.Cog):
             if current.upper() in s.get("name", "").upper()
         ][:25]
 
+    # ═══════════════════ /toggle_scrim_reset ═══════════════════
+
+    @app_commands.command(
+        name="toggle_scrim_reset",
+        description="[Admin] Enable or disable daily auto-reset for a specific scrim tier",
+    )
+    @app_commands.describe(
+        name="Name of the scrim",
+        enable="True to allow daily auto-resets, False to pause them"
+    )
+    @app_commands.checks.has_permissions(administrator=True)
+    async def toggle_scrim_reset(self, interaction: discord.Interaction, name: str, enable: bool):
+        """Toggle the auto_reset flag for a scrim in scrim_data.json."""
+        scrim_name = name.strip().upper()
+        scrims = load_scrims()
+        
+        found = False
+        for s in scrims:
+            if s.get("name", "").upper() == scrim_name:
+                s["auto_reset"] = enable
+                found = True
+                break
+                
+        if not found:
+            await interaction.response.send_message(
+                embed=discord.Embed(
+                    title="❌ Not Found",
+                    description=f"No scrim called `{scrim_name}` exists.",
+                    color=Theme.ERROR,
+                ),
+                ephemeral=True,
+            )
+            return
+            
+        if save_scrims(scrims):
+            status = "✅ Enabled" if enable else "⏸️ Paused"
+            embed = discord.Embed(
+                title="🔄 Auto-Reset Toggled",
+                description=(
+                    f"{Theme.SEP}\n\n"
+                    f"**Scrim:** `{scrim_name}`\n"
+                    f"**Auto-Reset:** {status}\n\n"
+                    f"📝 Settings saved to `scrim_data.json`.\n\n{Theme.SEP}"
+                ),
+                color=Theme.SUCCESS if enable else Theme.WARNING,
+            )
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            print(f"🔄 [{scrim_name}] Auto-reset set to {enable} by {interaction.user}", flush=True)
+        else:
+            await interaction.response.send_message(
+                embed=discord.Embed(
+                    title="❌ Save Failed",
+                    description="Could not write to `scrim_data.json`.",
+                    color=Theme.ERROR,
+                ),
+                ephemeral=True,
+            )
+
+    @toggle_scrim_reset.autocomplete("name")
+    async def toggle_scrim_reset_autocomplete(
+        self, interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[str]]:
+        scrims = load_scrims()
+        return [
+            app_commands.Choice(name=s["name"], value=s["name"])
+            for s in scrims
+            if current.upper() in s.get("name", "").upper()
+        ][:25]
+
+
     # ═══════════════════ /viewscrims ═══════════════════
 
     @app_commands.command(
@@ -457,6 +532,7 @@ class ScrimsResetCog(commands.Cog):
                 "daily_category": cfg.get("daily_category", "N/A"),
                 "channels": cfg.get("channels", []),
                 "reset_time_utc": f"{h:02d}:{m:02d}",
+                "auto_reset": cfg.get("auto_reset", True),
                 "last_reset_date": self.last_reset_dates.get(scrim_name, "Never"),
                 "status": (
                     "✅ Reset today"

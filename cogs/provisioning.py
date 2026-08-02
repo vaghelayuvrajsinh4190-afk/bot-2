@@ -138,15 +138,9 @@ class ProvisioningCog(commands.Cog):
             try:
                 # ─────── MIDNIGHT RESET (00:00 IST) per scrim ───────
                 if local_now.hour == 0 and local_now.minute == 0:
-                    midnight_enabled = await asyncio.to_thread(get_config, "midnight_reset", True)
-                    if midnight_enabled:
-                        reset_key = f"last_reset_date_{scrim_id}"
-                        last_reset = await asyncio.to_thread(get_config, reset_key, "")
-                        if last_reset != today_str:
-                            await self._midnight_reset(guild, local_now)
-                            await asyncio.to_thread(set_config, reset_key, today_str)
-                    else:
-                        print(f"🔘 Midnight reset is DISABLED via config for {scrim_id}. Skipping.", flush=True)
+                    # The multi-tier reset is handled by ScrimsResetCog.
+                    # We no longer call the global _midnight_reset here to prevent duplicate groups.
+                    pass
 
                 # ─────── REGISTRATION OPEN per scrim ───────
                 auto_reg_enabled = await asyncio.to_thread(get_config, "auto_registration_open", True)
@@ -180,9 +174,19 @@ class ProvisioningCog(commands.Cog):
         local_now = utc_now + datetime.timedelta(hours=TIMEZONE_OFFSET)
         today_str = local_now.strftime("%Y-%m-%d")
 
+        # If multi-tier scrims are configured, ScrimsResetCog handles resets.
+        # We only run legacy catch-up if there are no active scrims in the database.
+        from models.scrim import get_active_scrims
+        try:
+            active = await asyncio.to_thread(get_active_scrims)
+            if active:
+                return
+        except:
+            pass
+
         last_reset = await asyncio.to_thread(get_config, "last_reset_date", "")
         if last_reset != today_str:
-            print(f"⚠️ Missed reset detected (last: '{last_reset}', today: '{today_str}'). Running catch-up reset...", flush=True)
+            print(f"⚠️ Missed legacy reset detected (last: '{last_reset}', today: '{today_str}'). Running catch-up...", flush=True)
             await self._midnight_reset(guild, local_now)
             await asyncio.to_thread(set_config, "last_reset_date", today_str)
 
