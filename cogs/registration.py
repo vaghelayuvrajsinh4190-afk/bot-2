@@ -352,10 +352,6 @@ class ConfirmRegistrationView(ui.View):
 
 
 
-        # 3. Cross-Tier Duplicate Configuration
-        cross_tier_allowed = scrim_settings.get("cross_tier_registration", False)
-        check_date = None if cross_tier_allowed else date_str
-
         # Check if banned asynchronously
         is_ban, ban_doc = await asyncio.to_thread(punishment.is_banned, owner_id, self.scrim_id)
         if is_ban:
@@ -365,21 +361,21 @@ class ConfirmRegistrationView(ui.View):
             )
             return
 
-        # Check if already registered today asynchronously (with optional cross-tier check)
-        is_registered = await asyncio.to_thread(reg_model.is_already_registered, owner_id, event_id, check_date)
+        # Check if already registered today asynchronously for this specific scrim tier
+        is_registered = await asyncio.to_thread(reg_model.is_already_registered, owner_id, event_id, None)
         if is_registered:
-            err_msg = "You are already registered for today." if cross_tier_allowed else "You are already registered in a scrim today (cross-tier registration is disabled)."
+            err_msg = "You are already registered for this scrim today."
             await interaction.response.send_message(
                 embed=error_embed("❌ Error", err_msg),
                 ephemeral=True
             )
             return
 
-        # Check teammate status asynchronously (with optional cross-tier check)
+        # Check teammate status asynchronously for this specific scrim tier
         for m in self.selected_members:
-            is_reg, existing_team = await asyncio.to_thread(reg_model.is_teammate_registered, str(m.id), event_id, check_date)
+            is_reg, existing_team = await asyncio.to_thread(reg_model.is_teammate_registered, str(m.id), event_id, None)
             if is_reg:
-                err_msg = f"{m.mention} is already registered in team **{existing_team}**." if cross_tier_allowed else f"{m.mention} is already registered in team **{existing_team}** in a scrim today."
+                err_msg = f"{m.mention} is already registered in team **{existing_team}** for this scrim today."
                 await interaction.response.send_message(
                     embed=error_embed("❌ Error", err_msg),
                     ephemeral=True
