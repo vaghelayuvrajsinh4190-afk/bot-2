@@ -105,9 +105,16 @@ async def update_group_roster(guild: discord.Guild, event_id: str, group_id: str
 
 async def update_registration_board(guild: discord.Guild, event_id: str):
     """Update the slot availability embed in the register channel."""
-    reg_channel_id = await asyncio.to_thread(get_channel_config, "register")
+    parts = event_id.split("_")
+    tier = parts[0] if len(parts) > 1 else ""
+    suffix = f"_{tier}" if tier else ""
+
+    reg_channel_id = await asyncio.to_thread(get_channel_config, f"register{suffix}")
     if not reg_channel_id:
-        return
+        # Fallback to general register channel
+        reg_channel_id = await asyncio.to_thread(get_channel_config, "register")
+        if not reg_channel_id:
+            return
 
     channel = guild.get_channel(reg_channel_id)
     if not channel:
@@ -117,7 +124,10 @@ async def update_registration_board(guild: discord.Guild, event_id: str):
     embed = build_registration_board_embed(all_groups)
     
     # Check permanent board first
-    slot_msg_id = await asyncio.to_thread(get_config, "slot_message_id")
+    slot_msg_id = await asyncio.to_thread(get_config, f"slot_message_id{suffix}")
+    if not slot_msg_id and suffix:
+        slot_msg_id = await asyncio.to_thread(get_config, "slot_message_id")
+        
     if slot_msg_id:
         await safe_edit_message(channel, slot_msg_id, embed, fallback_send=False)
         return
