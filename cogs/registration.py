@@ -350,30 +350,7 @@ class ConfirmRegistrationView(ui.View):
             )
             return
 
-        # 2. Tier Gatekeeping Check
-        access_mode = scrim_settings.get("access_mode", "open")
-        access_role_id = scrim_settings.get("access_role_id")
-        whitelist = scrim_settings.get("whitelist", [])
 
-        has_access = False
-        if access_mode == "open":
-            has_access = True
-        elif access_mode == "role":
-            if access_role_id and discord.utils.get(interaction.user.roles, id=int(access_role_id)):
-                has_access = True
-        elif access_mode == "whitelist":
-            if owner_id in whitelist:
-                has_access = True
-        elif access_mode == "role_or_whitelist":
-            if (access_role_id and discord.utils.get(interaction.user.roles, id=int(access_role_id))) or (owner_id in whitelist):
-                has_access = True
-
-        if not has_access:
-            await interaction.response.send_message(
-                embed=error_embed("🔒 Access Denied", "You do not have the required role or whitelist access to register in this tier."),
-                ephemeral=True
-            )
-            return
 
         # 3. Cross-Tier Duplicate Configuration
         cross_tier_allowed = scrim_settings.get("cross_tier_registration", False)

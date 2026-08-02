@@ -510,8 +510,6 @@ class ScrimManagerCog(commands.Cog):
         app_commands.Choice(name="🔒 lock_minutes", value="lock_minutes"),
         app_commands.Choice(name="⏰ reminder_lead_minutes", value="reminder_lead_minutes"),
         app_commands.Choice(name="📢 channel_mode", value="channel_mode"),
-        app_commands.Choice(name="🛡️ access_mode", value="access_mode"),
-        app_commands.Choice(name="🔑 access_role_id", value="access_role_id"),
         app_commands.Choice(name="🌐 cross_tier_registration", value="cross_tier_registration"),
     ])
     async def scrim_settings(self, interaction: discord.Interaction, scrim_id: str, setting: str = None, value: str = None):
