@@ -228,7 +228,7 @@ def build_registration_board_embed(groups=None, event_name="Daily Scrims"):
             total_capacity += pub_cap
 
             # Circle-dot progress bar
-            dot_bar = Theme.circle_bar(pub_count, pub_cap, 12)
+            dot_bar = Theme.circle_bar(pub_count, pub_cap, 10)
 
             # IDP-based timing instead of start times
             m1 = g.get("match1", {})
@@ -262,7 +262,7 @@ def build_registration_board_embed(groups=None, event_name="Daily Scrims"):
         groups_text = "\n\n".join(group_lines)
     else:
         groups_text = (
-            "`\u26aa\u26aa\u26aa\u26aa\u26aa\u26aa\u26aa\u26aa\u26aa\u26aa\u26aa\u26aa` 0/0 filled\n\n"
+            "`○○○○○○○○○○` 0/0 filled\n\n"
             "*No groups provisioned yet. Check back later!*"
         )
 
