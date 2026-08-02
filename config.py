@@ -226,7 +226,7 @@ class Theme:
     def circle_bar(current, maximum, length=10):
         """Generate a circle-dot progress bar using ● (filled) and ○ (empty)."""
         filled = round((current / maximum) * length) if maximum else 0
-        return "`" + "●" * filled + "○" * (length - filled) + "`"
+        return "●" * filled + "○" * (length - filled)
 
     @staticmethod
     def group_color(count, mx):

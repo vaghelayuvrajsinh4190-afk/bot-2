@@ -136,3 +136,45 @@ async def update_registration_board(guild: discord.Guild, event_id: str):
     avail_msg_id = await asyncio.to_thread(get_config, f"slot_availability_msg_{event_id}")
     if avail_msg_id:
         await safe_edit_message(channel, avail_msg_id, embed, fallback_send=False)
+
+def generate_progress_bar(current_count: int, max_capacity: int, length: int = 10) -> str:
+    """
+    Dynamically generates a progress bar using filled (●) and empty (○) dots.
+    """
+    if max_capacity <= 0:
+        return "○" * length
+    ratio = current_count / max_capacity
+    filled_dots = round(ratio * length)
+    filled_dots = min(filled_dots, length)
+    empty_dots = length - filled_dots
+    return ("●" * filled_dots) + ("○" * empty_dots)
+
+async def update_registration_embed(channel: discord.TextChannel, message_id: int, current_count: int, max_capacity: int):
+    try:
+        # 1. Fetch the original message (or use get_partial_message for efficiency)
+        partial_msg = channel.get_partial_message(message_id)
+        
+        # 2. Generate the dynamic progress bar
+        progress_bar = generate_progress_bar(current_count, max_capacity)
+        
+        # 3. Build the updated embed description
+        description = (
+            f"🟢 **Group 665 — 2 Aug**\n"
+            f"⌚ **IDP:** M1: 7:14 PM | M2: 7:54 PM\n"
+            f"`{progress_bar}` {current_count}/{max_capacity} filled"
+        )
+        
+        # 4. Create the new embed
+        updated_embed = discord.Embed(
+            title="🏆 Registration Board",
+            description=description,
+            color=discord.Color.green()
+        )
+        
+        # 5. Push the updated embed back to Discord
+        await partial_msg.edit(embed=updated_embed)
+        
+    except discord.NotFound:
+        print("Error: The original message was deleted.")
+    except discord.HTTPException as e:
+        print(f"Failed to edit message: {e}")

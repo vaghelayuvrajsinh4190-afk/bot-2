@@ -58,7 +58,7 @@ def build_roster_embed(group_doc, registrations, capacity):
     display_name = f"[{scrim_id.upper()}] GRP-{grp_num:02d}"
     status = Theme.group_status(count, capacity)
     color = Theme.group_color(count, capacity)
-    bar = Theme.bar(public_count, public_capacity, 16)
+    bar = Theme.circle_bar(public_count, public_capacity, 16)
 
     # Build the match info
     match1 = group_doc.get("match1", {})
@@ -153,7 +153,7 @@ def build_slot_availability_embed(groups, event_name="Scrims Qualifiers"):
         total_capacity += pub_cap
 
         status = Theme.group_status(count, cap)
-        bar = Theme.bar(pub_count, pub_cap, 10)
+        bar = Theme.circle_bar(pub_count, pub_cap, 10)
 
         m1 = g.get("match1", {})
         m2 = g.get("match2", {})
@@ -174,7 +174,7 @@ def build_slot_availability_embed(groups, event_name="Scrims Qualifiers"):
             f"  ⏱ **Matchtimes:** `{m1_start}` │ `{m2_start}`"
         )
 
-    overall_bar = Theme.bar(total_filled, total_capacity, 18)
+    overall_bar = Theme.circle_bar(total_filled, total_capacity, 18)
     groups_text = "\n\n".join(lines) if lines else "*No groups available yet.*"
 
     embed = make_embed(
@@ -252,7 +252,7 @@ def build_registration_board_embed(groups=None, event_name="Daily Scrims"):
 
             group_lines.append(
                 f"{status_emoji} **Group {grp_num} \u2014 {date_display}**\n"
-                f"\U0001f552 **IDP:** M1: `{m1_idp}` | M2: `{m2_idp}`\n"
+                f"\U0001f552 **IDP:** M1: {m1_idp} | M2: {m2_idp}\n"
                 f"{dot_bar} {pub_count}/{pub_cap} filled"
             )
     else:
@@ -369,7 +369,7 @@ def build_group_control_panel_embed(group_doc):
         f"│  **M1:** `{m1.get('start', 'TBD')}` │ IDP `{m1.get('idp', 'TBD')}` │ `{m1.get('map', 'TBD')}`\n"
         f"│  **M2:** `{m2.get('start', 'TBD')}` │ IDP `{m2.get('idp', 'TBD')}` │ `{m2.get('map', 'TBD')}`\n"
         f"╰────────────────────────────╯\n\n"
-        f"📊 **Slots:** `{pub_count}/{pub_cap}` │ {Theme.bar(pub_count, pub_cap, 10)}"
+        f"📊 **Slots:** `{pub_count}/{pub_cap}` │ {Theme.circle_bar(pub_count, pub_cap, 10)}"
         f"{f' │ 🔒 {reserved} Reserved' if reserved else ''}\n\n"
         f"Use the buttons below to manage this group.\n\n"
         f"**Row 1** — Admin Only\n"

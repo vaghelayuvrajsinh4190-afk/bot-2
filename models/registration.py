@@ -40,7 +40,7 @@ def create_registration(owner_id: str, event_id: str, group_id: str,
     }
     result = registrations.update_one(
         {"owner_id": owner_id, "event_id": event_id},
-        {"$setOnInsert": doc},
+        {"$set": doc},
         upsert=True
     )
     return doc
@@ -66,19 +66,15 @@ def get_group_registrations(group_id: str, event_id: str):
 
 def cancel_registration(owner_id: str, event_id: str):
     """
-    Cancel a registration (mark as cancelled).
-    Returns the cancelled doc or None.
+    Cancel a registration (completely remove it).
+    Returns the deleted doc or None.
     """
-    result = registrations.find_one_and_update(
+    result = registrations.find_one_and_delete(
         {
             "owner_id": owner_id,
             "event_id": event_id,
             "status": "registered"
-        },
-        {"$set": {
-            "status": "cancelled",
-            "cancelled_at": datetime.datetime.utcnow().isoformat()
-        }}
+        }
     )
     return result
 
