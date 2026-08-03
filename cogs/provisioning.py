@@ -802,7 +802,7 @@ class ProvisioningCog(commands.Cog):
             await asyncio.sleep(0.5)
 
             # Create channel only if create_group_channels is enabled
-            create_channels = settings.get("create_group_channels", False)
+            create_channels = settings.get("create_group_channels", True)
             channel = None
             if create_channels:
                 channel_name = f"⚔️・grp-{i:02d}-lobby"

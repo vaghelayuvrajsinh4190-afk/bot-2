@@ -43,6 +43,7 @@ DEFAULT_SETTINGS = {
     "timezone_offset": 5.5,
     "channel_mode": "shared",  # "shared" or "separate"
     "cross_tier_registration": False,  # Allow registering in multiple tiers same day
+    "create_group_channels": True,
 }
 
 DEFAULT_MODULES = {
