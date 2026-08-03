@@ -328,33 +328,16 @@ def get_scrim_color(scrim_id: str):
 def is_group_started_or_finished(scrim_id: str, group_number: int) -> bool:
     """
     Check if a group's match has already started or finished.
-    Loads schedule.json, looks up the scrim_id, finds the group_number,
-    parses match1.start time, and returns True if current IST time > match time.
-
-    Args:
-        scrim_id: Scrim identifier (e.g. "SQ", "T3")
-        group_number: 1-based group number
-
-    Returns:
-        True if the group's match1 has started/finished, False otherwise.
-        Returns False on any error (fail-safe: allow registration).
+    Returns True if current IST time > match time.
     """
     try:
-        schedule_file = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            "schedule.json"
-        )
-        with open(schedule_file, "r", encoding="utf-8") as f:
-            data = json.load(f)
-
-        scrim_key = scrim_id.upper() if scrim_id else "SQ"
-        scrim_data = data.get(scrim_key)
-        if not scrim_data:
+        from config import load_schedule
+        schedule = load_schedule(scrim_id)
+        if not schedule:
             return False
 
-        groups_list = scrim_data.get("groups", [])
         target_group = None
-        for g in groups_list:
+        for g in schedule:
             if g.get("group_number") == group_number:
                 target_group = g
                 break
@@ -363,14 +346,19 @@ def is_group_started_or_finished(scrim_id: str, group_number: int) -> bool:
             return False
 
         start_str = target_group.get("match1", {}).get("start")
-        if not start_str:
+        if not start_str or start_str.upper() == "TBD":
             return False
 
         # Parse "HH:MM AM/PM" into today's datetime with IST offset
         utc_now = datetime.datetime.utcnow()
         ist_now = utc_now + datetime.timedelta(hours=TIMEZONE_OFFSET)
 
-        parsed_time = datetime.datetime.strptime(start_str, "%I:%M %p")
+        try:
+            parsed_time = datetime.datetime.strptime(start_str.strip(), "%I:%M %p")
+        except ValueError:
+            # Silently ignore format errors (user typed the time wrong in schedule)
+            return False
+
         match_dt = ist_now.replace(
             hour=parsed_time.hour,
             minute=parsed_time.minute,
@@ -382,5 +370,4 @@ def is_group_started_or_finished(scrim_id: str, group_number: int) -> bool:
 
     except Exception as e:
         print(f"⚠️ is_group_started_or_finished error: {e}", flush=True)
-        traceback.print_exc()
         return False
