@@ -1,6 +1,18 @@
 """
 Mack Bot — Punishment Model
-CRUD operations for bans, strikes, and punishments.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Disciplinary record management for player bans and strikes.
+
+Features automatic expiry checking — bans with a duration are silently
+deactivated once their TTL elapses.  Supports per-scrim scoping so a
+ban in one tier does not affect registration in another.
+
+Key Functions:
+    ban_user / unban_user    —  Issue or revoke bans
+    is_banned                —  Real-time ban check with auto-expiry
+    get_active_bans          —  Admin listing with lazy cleanup
+    cleanup_expired_bans     —  Bulk expiry for nightly maintenance
 """
 
 import datetime

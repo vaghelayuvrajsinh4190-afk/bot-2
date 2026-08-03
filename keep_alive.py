@@ -1,8 +1,17 @@
 """
-Mack Bot — Keep Alive Server
-HTTP server to keep the bot alive on hosting platforms like Replit/Render.
-Includes /health endpoint for monitoring.
-UptimeRobot pings this every 5 minutes to bypass 15-minute sleep timers.
+Mack Bot — Keep-Alive Server
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Lightweight HTTP server that prevents the bot process from being killed
+on cloud hosting platforms (Replit, Render, Railway, etc.).
+
+Endpoints:
+    GET /         —  HTML status page with uptime display
+    GET /health   —  JSON health-check payload for monitoring services
+
+The server runs on a daemon thread and does not interfere with the
+Discord event loop.  UptimeRobot (or similar) pings every 5 minutes
+to bypass idle-timeout policies.
 """
 
 from http.server import HTTPServer, BaseHTTPRequestHandler

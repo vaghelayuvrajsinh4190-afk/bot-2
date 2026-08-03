@@ -1,6 +1,12 @@
 """
 Mack Bot — Help Menu Cog
-Interactive help menu with dropdown navigation.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Interactive, self-documenting help system for Mack Bot.
+
+Uses Discord UI Select Menus to categorize slash commands into logical
+groupings (Admin, Match, Teams, Utility) with inline descriptions and
+parameter hints. Replaces the default Discord help command.
 """
 
 import discord

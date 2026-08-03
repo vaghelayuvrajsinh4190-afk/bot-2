@@ -1,7 +1,19 @@
 """
 Mack Bot — Embed Utilities
-Shared embed builder and visual helpers.
-Tier-1 Esports UI — Premium visual design for syndicate.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Centralized embed builder and visual helpers for the Mack Bot UI.
+
+Implements a Tier-1 Esports visual language with consistent theming,
+premium colour gradients, and structured data presentation across all
+bot responses.
+
+Provides:
+    make_embed / error_embed / success_embed   —  Base embed factories
+    build_roster_embed                          —  Group roster cards
+    build_registration_board_embed              —  Slot availability boards
+    build_registration_receipt_embed            —  Confirmation receipts
+    build_group_control_panel_embed             —  Admin control panels
 """
 
 import datetime
@@ -244,44 +256,29 @@ def build_registration_board_embed(groups=None, event_name="Daily Scrims"):
 
             # Status emoji based on fill ratio
             if count >= cap:
-                status_emoji = "\U0001f534"
+                status_emoji = "🔴"
             elif count >= cap * 0.75:
-                status_emoji = "\U0001f7e1"
+                status_emoji = "🟡"
             else:
-                status_emoji = "\U0001f7e2"
+                status_emoji = "🟢"
 
             group_lines.append(
                 f"{status_emoji} **Group {grp_num} \u2014 {date_display}**\n"
-                f"\U0001f552 **IDP:** M1: {m1_idp} | M2: {m2_idp}\n"
+                f"⌚ **IDP:** M1: `{m1_idp}` | M2: `{m2_idp}`\n"
                 f"{dot_bar} {pub_count}/{pub_cap} filled"
             )
     else:
         total_capacity = 1  # Avoid division by zero
 
     if group_lines:
-        groups_text = "\n\n".join(group_lines)
+        groups_text = "\n".join(group_lines)
     else:
         groups_text = (
             "`○○○○○○○○○○` 0/0 filled\n\n"
             "*No groups provisioned yet. Check back later!*"
         )
 
-    # Instructional header + rules + group slots
-    description = (
-        "Welcome to the official registration system for the upcoming qualifiers. "
-        "Please read the instructions carefully before claiming your slot.\n\n"
-        "**\U0001f4dd How to Register:**\n"
-        "**1.** Click the \U0001f4e5 **Register Team** button below.\n"
-        "**2.** Fill out the form with your Team Name and IGL details.\n"
-        "**3.** Make sure your in-game Character IDs are ready.\n"
-        "**4.** Submit to instantly lock in your slot.\n\n"
-        "**\u26a0\ufe0f Important Rules:**\n"
-        "\u2022 Slots are strictly **first-come, first-served**.\n"
-        "\u2022 Spamming the form will result in a server ban.\n"
-        "\u2022 Roster changes are not allowed after submission.\n\n"
-        f"**\U0001f4ca Current Slot Status:**\n"
-        f"{groups_text}"
-    )
+    description = groups_text
 
     embed = discord.Embed(
         title="\U0001f3c6 REGISTRATION PORTAL",

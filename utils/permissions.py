@@ -1,6 +1,14 @@
 """
 Mack Bot — Permission Utilities
-Helper functions for managing Discord roles and channel permissions.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Idempotent helper functions for managing Discord roles, channel overwrites,
+and category permissions.
+
+Key Functions:
+    get_or_create_role          —  Role retrieval with fallback creation
+    set_channel_permissions     —  Apply granular channel overwrites
+    lock_channel / unlock_channel — Quick toggle for public channel access
 """
 
 import discord

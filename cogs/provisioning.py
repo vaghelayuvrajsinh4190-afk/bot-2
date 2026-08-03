@@ -1,11 +1,16 @@
 """
 Mack Bot — Provisioning Cog
-Handles the full autopilot system:
-  - Midnight Reset: cleanup, board reset, lock registration, auto-provision
-  - Registration Open: 10 AM IST unlock
-  - Manual /provision, /addgroups, /deprovision, /set_groups, /update_time
-  - Dynamic category naming (no hard-coded dates)
-  - Auto-create #registration channel + deploy board embed + persistent button
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Automated lifecycle engine for daily scrim events.
+
+Handles the full day-to-day timeline of a tournament tier:
+    • Midnight Reset: Database wipe, category reset, role cleanup
+    • Registration Open: Unlocks the board at 10 AM IST (configurable)
+    • Registration Lock: Locks the board when full or manually
+    • Auto-Provisioning: Spawns Categories, Group Text Channels, and Roles
+
+Executes the heavy-lifting of Discord channel manipulation asynchronously.
 """
 
 import datetime
@@ -138,9 +143,11 @@ class ProvisioningCog(commands.Cog):
             try:
                 # ─────── MIDNIGHT RESET (00:00 IST) per scrim ───────
                 if local_now.hour == 0 and local_now.minute == 0:
-                    # The multi-tier reset is handled by ScrimsResetCog.
-                    # We no longer call the global _midnight_reset here to prevent duplicate groups.
-                    pass
+                    last_reset_key = f"last_reset_date_{scrim_id}"
+                    last_reset = await asyncio.to_thread(get_config, last_reset_key, "")
+                    if last_reset != today_str:
+                        await self.tier_reset(guild, scrim)
+                        await asyncio.to_thread(set_config, last_reset_key, today_str)
 
                 # ─────── REGISTRATION OPEN per scrim ───────
                 auto_reg_enabled = await asyncio.to_thread(get_config, "auto_registration_open", True)
@@ -267,11 +274,12 @@ class ProvisioningCog(commands.Cog):
 
         print("✅ Midnight reset complete.", flush=True)
 
-    async def tier_reset(self, guild, config):
+    async def tier_reset(self, guild, scrim_doc):
         """
-        Full reset cycle for a specific scrim/tier (called by ScrimsResetCog loop).
+        Full reset cycle for a specific scrim/tier natively.
         """
-        scrim_id = config.get("name")
+        scrim_id = scrim_doc.get("scrim_id", "SQ")
+        settings = scrim_doc.get("settings", {})
         print(f"🕛 TIER RESET: Starting full reset cycle for scrim '{scrim_id}'...", flush=True)
 
         import datetime
@@ -292,22 +300,13 @@ class ProvisioningCog(commands.Cog):
 
         # ── Step 2: Auto-Provision New Day ──
         event_id = get_today_event_id(scrim_id)
-        count = int(config.get("group_count", DEFAULT_GROUP_COUNT))
-        cap = int(config.get("capacity", DEFAULT_GROUP_CAPACITY))
-        category_name = config.get("daily_category", f"DAILY {scrim_id.upper()} MATCHES")
+        count = int(settings.get("group_count", DEFAULT_GROUP_COUNT))
+        cap = int(settings.get("capacity", DEFAULT_GROUP_CAPACITY))
+        category_name = settings.get("category_name", f"🏆・[{scrim_id.upper()}] SCRIMS")
 
-        # Create category using ScrimsResetCog logic if possible, or let auto_provision do it
-        scrim_cog = self.bot.get_cog("ScrimsResetCog")
-        if scrim_cog:
-            category_created = await scrim_cog.reset_scrim(guild, config)
-            if category_created:
-                # Find the category we just created
-                cat = discord.utils.get(guild.categories, name=category_name)
-                if cat:
-                    await self._auto_provision(guild, event_id, count, cap, scrim_id=scrim_id, category_obj=cat)
-                    print(f"📦 Auto-provisioned {count} groups for {event_id} into {category_name}", flush=True)
-                    return True
-        return False
+        await self._auto_provision(guild, event_id, count, cap, scrim_id=scrim_id, category_name=category_name)
+        print(f"📦 Auto-provisioned {count} groups for {event_id} into {category_name}", flush=True)
+        return True
 
     # ═══════════════════ REGISTRATION OPEN ═══════════════════
 
@@ -369,80 +368,143 @@ class ProvisioningCog(commands.Cog):
 
     async def _reset_registration_board(self, guild):
         """Reset the permanent registration board embed to 0/0 (empty)."""
+        # Reset global board
         reg_channel_id = await asyncio.to_thread(get_channel_config, "register")
-        if not reg_channel_id:
-            return
+        if reg_channel_id:
+            channel = guild.get_channel(reg_channel_id)
+            if channel:
+                slot_msg_id = await asyncio.to_thread(get_config, "slot_message_id")
+                if slot_msg_id:
+                    try:
+                        msg = await channel.fetch_message(slot_msg_id)
+                        empty_embed = build_registration_board_embed(groups=None)
+                        await msg.edit(embed=empty_embed)
+                    except discord.NotFound:
+                        print("⚠️ Slot board message not found, will recreate on provision.", flush=True)
+                    except Exception as e:
+                        print(f"⚠️ Failed to reset board: {e}", flush=True)
 
-        channel = guild.get_channel(reg_channel_id)
-        if not channel:
-            return
-
-        slot_msg_id = await asyncio.to_thread(get_config, "slot_message_id")
-        if not slot_msg_id:
-            return
-
+        # Also reset scrim-specific boards
         try:
-            msg = await channel.fetch_message(slot_msg_id)
-            empty_embed = build_registration_board_embed(groups=None)
-            await msg.edit(embed=empty_embed)
-        except discord.NotFound:
-            print("⚠️ Slot board message not found, will recreate on provision.", flush=True)
+            from models import scrim as scrim_model
+            from config import get_effective_channel
+            active_scrims = await asyncio.to_thread(scrim_model.get_active_scrims)
+            for scrim_doc in active_scrims:
+                sid = scrim_doc["scrim_id"]
+                scrim_reg_ch_id = scrim_doc.get("channels", {}).get("register")
+                if scrim_reg_ch_id and scrim_reg_ch_id != reg_channel_id:
+                    ch = guild.get_channel(scrim_reg_ch_id)
+                    if ch:
+                        scrim_msg_id = await asyncio.to_thread(get_config, f"slot_message_id_{sid}")
+                        if scrim_msg_id:
+                            try:
+                                msg = await ch.fetch_message(scrim_msg_id)
+                                empty_embed = build_registration_board_embed(groups=None)
+                                await msg.edit(embed=empty_embed)
+                            except discord.NotFound:
+                                pass
+                            except Exception as e:
+                                print(f"⚠️ Failed to reset board for {sid}: {e}", flush=True)
         except Exception as e:
-            print(f"⚠️ Failed to reset board: {e}", flush=True)
+            print(f"⚠️ Failed to reset scrim-specific boards: {e}", flush=True)
 
     async def _lock_registration(self, guild):
         """Change the register button to disabled 🔒 Registration Closed."""
+        # Lock global register channel
         reg_channel_id = await asyncio.to_thread(get_channel_config, "register")
-        if not reg_channel_id:
-            return
+        if reg_channel_id:
+            channel = guild.get_channel(reg_channel_id)
+            if channel:
+                slot_msg_id = await asyncio.to_thread(get_config, "slot_message_id")
+                if slot_msg_id:
+                    try:
+                        msg = await channel.fetch_message(slot_msg_id)
+                        from cogs.registration import PersistentRegisterView
+                        locked_view = PersistentRegisterView(locked=True)
+                        await msg.edit(view=locked_view)
+                    except discord.NotFound:
+                        pass
+                    except Exception as e:
+                        print(f"⚠️ Failed to lock registration: {e}", flush=True)
 
-        channel = guild.get_channel(reg_channel_id)
-        if not channel:
-            return
-
-        slot_msg_id = await asyncio.to_thread(get_config, "slot_message_id")
-        if not slot_msg_id:
-            return
-
+        # Also lock scrim-specific register channels
         try:
-            msg = await channel.fetch_message(slot_msg_id)
-            from cogs.registration import PersistentRegisterView
-            locked_view = PersistentRegisterView(locked=True)
-            await msg.edit(view=locked_view)
-        except discord.NotFound:
-            pass
+            from models import scrim as scrim_model
+            active_scrims = await asyncio.to_thread(scrim_model.get_active_scrims)
+            for scrim_doc in active_scrims:
+                sid = scrim_doc["scrim_id"]
+                scrim_reg_ch_id = scrim_doc.get("channels", {}).get("register")
+                if scrim_reg_ch_id and scrim_reg_ch_id != reg_channel_id:
+                    ch = guild.get_channel(scrim_reg_ch_id)
+                    if ch:
+                        scrim_msg_id = await asyncio.to_thread(get_config, f"slot_message_id_{sid}")
+                        if scrim_msg_id:
+                            try:
+                                msg = await ch.fetch_message(scrim_msg_id)
+                                from cogs.registration import PersistentRegisterView
+                                locked_view = PersistentRegisterView(scrim_id=sid, locked=True)
+                                await msg.edit(view=locked_view)
+                            except discord.NotFound:
+                                pass
+                            except Exception as e:
+                                print(f"⚠️ Failed to lock registration for {sid}: {e}", flush=True)
         except Exception as e:
-            print(f"⚠️ Failed to lock registration: {e}", flush=True)
+            print(f"⚠️ Failed to lock scrim-specific registrations: {e}", flush=True)
 
     async def _unlock_registration(self, guild):
         """Change the register button back to active 📥 Register Team."""
+        # Unlock global register channel
         reg_channel_id = await asyncio.to_thread(get_channel_config, "register")
-        if not reg_channel_id:
-            return
+        if reg_channel_id:
+            channel = guild.get_channel(reg_channel_id)
+            if channel:
+                slot_msg_id = await asyncio.to_thread(get_config, "slot_message_id")
+                if slot_msg_id:
+                    try:
+                        msg = await channel.fetch_message(slot_msg_id)
 
-        channel = guild.get_channel(reg_channel_id)
-        if not channel:
-            return
+                        # Also refresh the board embed with current groups
+                        event_id = get_today_event_id()
+                        all_groups = await asyncio.to_thread(group_model.get_all_groups, event_id)
+                        embed = build_registration_board_embed(all_groups)
 
-        slot_msg_id = await asyncio.to_thread(get_config, "slot_message_id")
-        if not slot_msg_id:
-            return
+                        from cogs.registration import PersistentRegisterView
+                        unlocked_view = PersistentRegisterView(locked=False)
+                        await msg.edit(embed=embed, view=unlocked_view)
+                    except discord.NotFound:
+                        pass
+                    except Exception as e:
+                        print(f"⚠️ Failed to unlock registration: {e}", flush=True)
 
+        # Also unlock scrim-specific register channels
         try:
-            msg = await channel.fetch_message(slot_msg_id)
+            from models import scrim as scrim_model
+            active_scrims = await asyncio.to_thread(scrim_model.get_active_scrims)
+            for scrim_doc in active_scrims:
+                sid = scrim_doc["scrim_id"]
+                scrim_reg_ch_id = scrim_doc.get("channels", {}).get("register")
+                if scrim_reg_ch_id and scrim_reg_ch_id != reg_channel_id:
+                    ch = guild.get_channel(scrim_reg_ch_id)
+                    if ch:
+                        scrim_msg_id = await asyncio.to_thread(get_config, f"slot_message_id_{sid}")
+                        if scrim_msg_id:
+                            try:
+                                msg = await ch.fetch_message(scrim_msg_id)
 
-            # Also refresh the board embed with current groups
-            event_id = get_today_event_id()
-            all_groups = await asyncio.to_thread(group_model.get_all_groups, event_id)
-            embed = build_registration_board_embed(all_groups)
+                                event_id = get_today_event_id(sid)
+                                all_groups = await asyncio.to_thread(group_model.get_all_groups, event_id)
+                                scrim_name = scrim_doc.get("name", f"{sid} Scrims")
+                                embed = build_registration_board_embed(all_groups, event_name=scrim_name)
 
-            from cogs.registration import PersistentRegisterView
-            unlocked_view = PersistentRegisterView(locked=False)
-            await msg.edit(embed=embed, view=unlocked_view)
-        except discord.NotFound:
-            pass
+                                from cogs.registration import PersistentRegisterView
+                                unlocked_view = PersistentRegisterView(scrim_id=sid, locked=False)
+                                await msg.edit(embed=embed, view=unlocked_view)
+                            except discord.NotFound:
+                                pass
+                            except Exception as e:
+                                print(f"⚠️ Failed to unlock registration for {sid}: {e}", flush=True)
         except Exception as e:
-            print(f"⚠️ Failed to unlock registration: {e}", flush=True)
+            print(f"⚠️ Failed to unlock scrim-specific registrations: {e}", flush=True)
 
     # ═══════════════════ AUTO-PROVISION ═══════════════════
 
@@ -739,12 +801,16 @@ class ProvisioningCog(commands.Cog):
                 role = await get_or_create_role(guild, f"{scrim_id.upper()}-{group_id}", discord.Color.blue())
             await asyncio.sleep(0.5)
 
-            # Create channel with zero-padded minimalist format
-            channel_name = f"⚔️・grp-{i:02d}-lobby"
-            channel = await create_group_channel(guild, group_cat, channel_name, role)
-            if not channel:
-                continue
-            await asyncio.sleep(0.5)
+            # Create channel only if create_group_channels is enabled
+            create_channels = settings.get("create_group_channels", False)
+            channel = None
+            if create_channels:
+                channel_name = f"⚔️・grp-{i:02d}-lobby"
+                channel = await create_group_channel(guild, group_cat, channel_name, role)
+                if not channel:
+                    # If channel creation fails, still create the group doc without a channel
+                    pass
+                await asyncio.sleep(0.5)
 
             # Insert group doc
             group_doc = await asyncio.to_thread(
@@ -754,7 +820,7 @@ class ProvisioningCog(commands.Cog):
                 capacity=capacity,
                 match1=match1,
                 match2=match2,
-                channel_id=channel.id,
+                channel_id=channel.id if channel else None,
                 role_id=role.id,
                 category_id=group_cat.id,
                 reserved_slots=default_res,
@@ -762,18 +828,19 @@ class ProvisioningCog(commands.Cog):
             )
             created_groups.append(group_doc)
 
-            # Post roster embed
-            from models import registration as reg_model
-            regs = await asyncio.to_thread(reg_model.get_group_registrations, group_id, event_id)
-            roster_embed = build_roster_embed(group_doc, regs, capacity)
-            msg = await channel.send(embed=roster_embed)
-            await asyncio.to_thread(group_model.update_roster_message, event_id, group_id, msg.id)
-            await asyncio.sleep(0.5)
+            # Post roster embed (only if channel was created)
+            if channel:
+                from models import registration as reg_model
+                regs = await asyncio.to_thread(reg_model.get_group_registrations, group_id, event_id)
+                roster_embed = build_roster_embed(group_doc, regs, capacity)
+                msg = await channel.send(embed=roster_embed)
+                await asyncio.to_thread(group_model.update_roster_message, event_id, group_id, msg.id)
+                await asyncio.sleep(0.5)
 
-            # Deploy control panel
-            from cogs.admin_panel import GroupControlPanelView
-            panel_embed = build_group_control_panel_embed(group_doc)
-            await channel.send(embed=panel_embed, view=GroupControlPanelView(event_id, group_id))
+                # Deploy control panel
+                from cogs.admin_panel import GroupControlPanelView
+                panel_embed = build_group_control_panel_embed(group_doc)
+                await channel.send(embed=panel_embed, view=GroupControlPanelView(event_id, group_id))
 
             # Rate limit pacing
             await asyncio.sleep(2.0)

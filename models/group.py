@@ -1,7 +1,19 @@
 """
 Mack Bot — Group Model
-CRUD operations for daily groups.
-Groups are pre-created by the provisioning job and filled atomically.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+CRUD operations for daily match groups.
+
+Groups are pre-created by the provisioning job and filled atomically
+via `claim_specific_slot`.  Each group tracks its capacity, registered
+count, match schedule, Discord channel/role IDs, and archive status.
+
+Key Functions:
+    create_group / get_group      —  Lifecycle management
+    claim_specific_slot           —  Atomic slot reservation (race-safe)
+    release_slot                  —  Slot release on cancellation
+    get_open_groups               —  Available groups for registration
+    update_roster_message         —  Track the roster embed message ID
 """
 
 import datetime

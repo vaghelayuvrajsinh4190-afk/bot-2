@@ -1,6 +1,15 @@
 """
 Mack Bot — Points & Leaderboard Cog
-Slash commands for setpoints, setposition, addresult, matchresults, leaderboard, mvp, resetresults, and postleaderboard.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Match results processing, scoring, and leaderboard generation.
+
+Handles the full lifecycle of match results:
+    1. Score entry via /addresult (kills + placement)
+    2. Dynamic point calculation based on per-scrim config rules
+    3. Auto-updating of global team stats
+    4. Image-based leaderboard generation via QuickChart API
+    5. Daily MVP tracking and results publishing
 """
 
 import datetime

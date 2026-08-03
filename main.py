@@ -1,6 +1,15 @@
 """
 Mack Bot — Main Entry Point
-Bot class, event handlers, cog loading, anti-crash system, and startup.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Core bootstrap module for the Mack Bot Discord application.
+
+Responsibilities:
+    • MackBot class  —  Custom commands.Bot subclass with cog auto-loading
+    • Anti-crash      —  Global sync + async exception handlers for zero downtime
+    • Slash sync      —  Smart command-tree hashing to avoid Discord rate limits
+    • Event handlers  —  Unified error handling for prefix and slash commands
+    • Startup         —  Database index creation, migration, keep-alive server
 """
 
 import sys
@@ -83,7 +92,6 @@ class MackBot(commands.Bot):
             "cogs.announcements",
             "cogs.help",
             "cogs.points",
-            "cogs.scrims_reset",
             "cogs.scrim_manager",
             "cogs.global_tracker",
             "cogs.tier_management",

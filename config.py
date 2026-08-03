@@ -1,6 +1,15 @@
 """
 Mack Bot — Configuration & Constants
-All environment variables, theme colors, and bot-wide settings.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Central configuration module for the entire Mack Bot application.
+
+Contents:
+    • Environment variables    —  TOKEN, MONGO_URI, GUILD_ID, OWNER_ID
+    • Bot-wide constants       —  Group capacity, timing, category names
+    • Schedule loader/saver    —  Multi-source (MongoDB → schedule.json) with fallback
+    • Theme design system      —  Colour palette, progress bars, visual separators
+    • Scrim config resolvers   —  Per-scrim → global fallback for settings & channels
 """
 
 import os
@@ -225,7 +234,12 @@ class Theme:
     @staticmethod
     def circle_bar(current, maximum, length=10):
         """Generate a circle-dot progress bar using ● (filled) and ○ (empty)."""
-        filled = round((current / maximum) * length) if maximum else 0
+        if maximum <= 0:
+            return "○" * length
+        if current >= maximum:
+            return "●" * length
+        import math
+        filled = max(1, math.floor((current / maximum) * length)) if current > 0 else 0
         return "●" * filled + "○" * (length - filled)
 
     @staticmethod

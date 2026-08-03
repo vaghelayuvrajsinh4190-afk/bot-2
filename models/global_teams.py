@@ -1,7 +1,18 @@
 """
 Mack Bot — Global Teams Model
-Tracks team identity, stats, and tier placement across all scrims and days.
-Used for global leaderboards, promotion/demotion, and cross-tier tracking.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Persistent team identity and statistics tracker across all scrim tiers.
+
+Provides the data layer for global leaderboards, tier promotion/demotion,
+and cross-tier team performance analysis.
+
+Key Functions:
+    upsert_team / get_team          —  Team record management
+    update_team_stats               —  Post-match stat increments
+    promote_team / demote_team      —  Tier movement operations
+    get_leaderboard                 —  Sorted global rankings
+    get_promotion/demotion_candidates — Tier boundary analysis
 """
 
 import datetime

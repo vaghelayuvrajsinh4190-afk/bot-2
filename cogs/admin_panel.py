@@ -1,10 +1,16 @@
 """
 Mack Bot — Admin Panel Cog
-Contains:
-  - GroupControlPanelView: 3-row persistent panel in every group channel
-  - /panel command for admin overview
-  - /config, /viewconfig, /unban, /banlist commands
-  - Modals for Edit Match, Move Team, Punish Team
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Interactive dashboard and moderation toolset for tournament administrators.
+
+Core Components:
+    GroupControlPanelView   —  Persistent 3-row button panel in lobby channels
+    Modals                  —  Edit Match, Move Team, Punish Team UI flows
+    Commands                —  /panel, /config, /viewconfig, /unban, /banlist
+
+Enables admins to manage team rosters, issue strikes/bans, and re-allocate
+slots directly from the Discord channel interface without typing commands.
 """
 
 import datetime

@@ -1,7 +1,18 @@
 """
 Mack Bot — Team Profile Model
-CRUD operations for saved team profiles.
-Teams persist for 30 days so returning players can reuse them.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Persistent team profile storage with automatic 30-day expiration.
+
+Returning players can reuse their saved roster, UIDs, and IGNs without
+re-entering details each day.  Profiles are keyed by Discord user ID
+and include duplicate-name detection for fair play enforcement.
+
+Key Functions:
+    save_profile / get_profile        —  Profile CRUD with TTL
+    check_duplicate_team_name         —  Case-insensitive uniqueness check
+    check_duplicate_player            —  Cross-team player detection
+    cleanup_expired_profiles          —  Bulk TTL cleanup for maintenance
 """
 
 import datetime

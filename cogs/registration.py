@@ -1,11 +1,14 @@
 """
-Mack Bot  - Registration Cog
-Handles the full registration flow:
+Mack Bot — Registration Cog
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-- /setup command (permanent embed + register button)
-- 30-Day "Already Registered" intercept
-- 3-step modal chain: Modal 1 (Team Info) → Modal 2 (Player UIDs) → Teammate Select
-- Atomic slot claim + public receipt
+User-facing registration flow and modal interactions.
+
+Features:
+    • Persistent Registration UI  —  Embed + "Register Now" Button via /setup
+    • 3-Step Registration Chain   —  Team Info → Player UIDs → Teammate Select
+    • Anti-Smurf Validation       —  30-Day "Already Registered" memory intercept
+    • Receipts & Tracking         —  Group lobby routing and receipt generation
 """
 
 import datetime
@@ -543,9 +546,10 @@ class ConfirmRegistrationView(ui.View):
     async def _post_public_receipt(self, guild, team_name, group_id, players,
                                     player_uids, player_igns, members, date_display):
         """Post a confirmation receipt to #registered-teams."""
-        from database import get_channel_config
+        from config import get_effective_channel
 
-        log_channel_id = await asyncio.to_thread(get_channel_config, "registered_teams")
+        # Try scrim-specific registered_teams channel, then global fallback
+        log_channel_id = await asyncio.to_thread(get_effective_channel, self.scrim_id, "registered_teams")
         if not log_channel_id:
             return
 
@@ -1042,6 +1046,11 @@ class RegistrationCog(commands.Cog):
         suffix = f"_{tier}" if tier else ""
         set_config(f"slot_message_id{suffix}", msg.id)
         set_channel_config(f"register{suffix}", channel.id)
+
+        # Also save to scrim-specific DB record if tier is provided
+        if tier:
+            from models import scrim as scrim_model
+            scrim_model.set_scrim_channel(tier.upper(), "register", channel.id)
 
         await interaction.followup.send(
             embed=success_embed(

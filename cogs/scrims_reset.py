@@ -1,13 +1,25 @@
 """
-Mack Bot — Scrims Reset Cog
-Automated daily category/channel reset for multiple independent scrim tiers.
+Mack Bot — Scrims Reset Cog  (v2.0)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Features:
-  - scrim_data.json stores all scrim tier configs (hot-reloaded every tick)
-  - Clock-based 60s loop triggers resets at specific UTC times
-  - Anchor-based category positioning (daily category placed below a reference)
-  - /add_scrim, /remove_scrim (with autocomplete), /viewconfig slash commands
-  - Each scrim tier is fully independent — one failure won't crash others
+Automated daily category & channel reset engine for independent scrim tiers.
+
+Architecture:
+    scrim_data.json   →  Legacy reset-schedule store (hot-reloaded every tick)
+    MongoDB (scrims)  →  Authoritative scrim registry for autocomplete & modules
+
+Background Loop:
+    60-second polling loop compares current UTC clock against each scrim's
+    configured reset time.  Resets are idempotent (one fire per scrim per day).
+    Delegates to ProvisioningCog for full tier resets when available.
+
+Slash Commands:
+    /toggle_scrim_reset  —  Enable or disable auto-reset for a scrim tier
+    /viewscrims          —  Download the current reset config as a .json file
+
+Note:
+    Scrim creation and deletion are handled by `/scrim create` and
+    `/scrim delete` in the Scrim Manager cog (scrim_manager.py).
 """
 
 import io
@@ -264,170 +276,6 @@ class ScrimsResetCog(commands.Cog):
     async def before_reset_loop(self):
         await self.bot.wait_until_ready()
 
-    # ═══════════════════ /add_scrim ═══════════════════
-
-    @app_commands.command(
-        name="add_scrim",
-        description="[Admin] Add a new scrim tier to the daily reset schedule",
-    )
-    @app_commands.describe(
-        name="Unique scrim name (e.g., SQ, T3, T2)",
-        anchor_category="Name of the existing category to position below",
-        daily_category="Name of the category that gets created/reset daily",
-        channels="Comma-separated channel names (e.g., room-id-pass,results)",
-        reset_hour="Reset hour in UTC (0–23)",
-        reset_minute="Reset minute in UTC (0–59)",
-    )
-    @app_commands.checks.has_permissions(administrator=True)
-    async def add_scrim(
-        self,
-        interaction: discord.Interaction,
-        name: str,
-        anchor_category: str,
-        daily_category: str,
-        channels: str,
-        reset_hour: app_commands.Range[int, 0, 23],
-        reset_minute: app_commands.Range[int, 0, 59],
-    ):
-        """Add a new scrim tier to scrim_data.json."""
-        scrim_name = name.strip().upper()
-
-        scrims = load_scrims()
-
-        # Duplicate check
-        if scrim_name in [s["name"].upper() for s in scrims]:
-            await interaction.response.send_message(
-                embed=discord.Embed(
-                    title="❌ Duplicate Name",
-                    description=(
-                        f"A scrim called `{scrim_name}` already exists.\n"
-                        f"Use `/remove_scrim` first if you want to replace it."
-                    ),
-                    color=Theme.ERROR,
-                ),
-                ephemeral=True,
-            )
-            return
-
-        # Parse channel list
-        channel_list = [
-            ch.strip().lower().replace(" ", "-")
-            for ch in channels.split(",")
-            if ch.strip()
-        ]
-        if not channel_list:
-            await interaction.response.send_message(
-                embed=discord.Embed(
-                    title="❌ No Channels",
-                    description="Provide at least one channel name (comma-separated).",
-                    color=Theme.ERROR,
-                ),
-                ephemeral=True,
-            )
-            return
-
-        new_scrim = {
-            "name": scrim_name,
-            "anchor_category": anchor_category.strip(),
-            "daily_category": daily_category.strip(),
-            "channels": channel_list,
-            "reset_time_utc": {"hour": reset_hour, "minute": reset_minute},
-        }
-
-        scrims.append(new_scrim)
-
-        if save_scrims(scrims):
-            embed = discord.Embed(
-                title="✅ Scrim Added",
-                description=(
-                    f"{Theme.SEP}\n\n"
-                    f"**Name:** `{scrim_name}`\n"
-                    f"**Anchor:** `{anchor_category.strip()}`\n"
-                    f"**Daily Category:** `{daily_category.strip()}`\n"
-                    f"**Channels:** `{', '.join(channel_list)}`\n"
-                    f"**Reset Time:** `{reset_hour:02d}:{reset_minute:02d} UTC`\n\n"
-                    f"📝 Saved — takes effect automatically, no restart needed.\n\n{Theme.SEP}"
-                ),
-                color=Theme.SUCCESS,
-            )
-            await interaction.response.send_message(embed=embed, ephemeral=True)
-            print(f"📥 [{scrim_name}] Added by {interaction.user}", flush=True)
-        else:
-            await interaction.response.send_message(
-                embed=discord.Embed(
-                    title="❌ Save Failed",
-                    description="Could not write to `scrim_data.json`. Check file permissions.",
-                    color=Theme.ERROR,
-                ),
-                ephemeral=True,
-            )
-
-    # ═══════════════════ /remove_scrim ═══════════════════
-
-    @app_commands.command(
-        name="remove_scrim",
-        description="[Admin] Remove a scrim tier from the daily reset schedule",
-    )
-    @app_commands.describe(name="Name of the scrim to remove")
-    @app_commands.checks.has_permissions(administrator=True)
-    async def remove_scrim(self, interaction: discord.Interaction, name: str):
-        """Remove a scrim tier by name from scrim_data.json."""
-        scrim_name = name.strip().upper()
-
-        scrims = load_scrims()
-        original_count = len(scrims)
-        scrims = [s for s in scrims if s["name"].upper() != scrim_name]
-
-        if len(scrims) == original_count:
-            await interaction.response.send_message(
-                embed=discord.Embed(
-                    title="❌ Not Found",
-                    description=(
-                        f"No scrim called `{scrim_name}` exists.\n"
-                        f"Current scrims: {', '.join(s['name'] for s in scrims) or 'None'}"
-                    ),
-                    color=Theme.ERROR,
-                ),
-                ephemeral=True,
-            )
-            return
-
-        if save_scrims(scrims):
-            self.last_reset_dates.pop(scrim_name, None)
-            embed = discord.Embed(
-                title="✅ Scrim Removed",
-                description=(
-                    f"{Theme.SEP}\n\n"
-                    f"Deleted `{scrim_name}` from the schedule.\n"
-                    f"Remaining scrims: **{len(scrims)}**\n\n"
-                    f"⚠️ Existing Discord categories/channels are **not** auto-deleted.\n\n{Theme.SEP}"
-                ),
-                color=Theme.SUCCESS,
-            )
-            await interaction.response.send_message(embed=embed, ephemeral=True)
-            print(f"🗑️ [{scrim_name}] Removed by {interaction.user}", flush=True)
-        else:
-            await interaction.response.send_message(
-                embed=discord.Embed(
-                    title="❌ Save Failed",
-                    description="Could not write to `scrim_data.json`.",
-                    color=Theme.ERROR,
-                ),
-                ephemeral=True,
-            )
-
-    @remove_scrim.autocomplete("name")
-    async def remove_scrim_autocomplete(
-        self, interaction: discord.Interaction, current: str
-    ) -> list[app_commands.Choice[str]]:
-        """Autocomplete populated from live scrim_data.json."""
-        scrims = load_scrims()
-        return [
-            app_commands.Choice(name=s["name"], value=s["name"])
-            for s in scrims
-            if current.upper() in s.get("name", "").upper()
-        ][:25]
-
     # ═══════════════════ /toggle_scrim_reset ═══════════════════
 
     @app_commands.command(
@@ -440,61 +288,59 @@ class ScrimsResetCog(commands.Cog):
     )
     @app_commands.checks.has_permissions(administrator=True)
     async def toggle_scrim_reset(self, interaction: discord.Interaction, name: str, enable: bool):
-        """Toggle the auto_reset flag for a scrim in scrim_data.json."""
+        """Toggle the auto_reset module for a scrim in the MongoDB database."""
+        from models import scrim as scrim_model
+
         scrim_name = name.strip().upper()
-        scrims = load_scrims()
-        
-        found = False
-        for s in scrims:
-            if s.get("name", "").upper() == scrim_name:
-                s["auto_reset"] = enable
-                found = True
-                break
-                
-        if not found:
+        scrim_doc = scrim_model.get_scrim(scrim_name)
+
+        if not scrim_doc:
             await interaction.response.send_message(
                 embed=discord.Embed(
                     title="❌ Not Found",
-                    description=f"No scrim called `{scrim_name}` exists.",
+                    description=f"No scrim called `{scrim_name}` exists.\nUse `/scrim create` to add one.",
                     color=Theme.ERROR,
                 ),
                 ephemeral=True,
             )
             return
-            
-        if save_scrims(scrims):
-            status = "✅ Enabled" if enable else "⏸️ Paused"
-            embed = discord.Embed(
-                title="🔄 Auto-Reset Toggled",
-                description=(
-                    f"{Theme.SEP}\n\n"
-                    f"**Scrim:** `{scrim_name}`\n"
-                    f"**Auto-Reset:** {status}\n\n"
-                    f"📝 Settings saved to `scrim_data.json`.\n\n{Theme.SEP}"
-                ),
-                color=Theme.SUCCESS if enable else Theme.WARNING,
-            )
-            await interaction.response.send_message(embed=embed, ephemeral=True)
-            print(f"🔄 [{scrim_name}] Auto-reset set to {enable} by {interaction.user}", flush=True)
-        else:
-            await interaction.response.send_message(
-                embed=discord.Embed(
-                    title="❌ Save Failed",
-                    description="Could not write to `scrim_data.json`.",
-                    color=Theme.ERROR,
-                ),
-                ephemeral=True,
-            )
+
+        scrim_model.set_scrim_module(scrim_name, "auto_reset", enable)
+
+        # Also sync to scrim_data.json for the legacy reset loop
+        scrims = load_scrims()
+        for s in scrims:
+            if s.get("name", "").upper() == scrim_name:
+                s["auto_reset"] = enable
+                break
+        save_scrims(scrims)
+
+        status = "✅ Enabled" if enable else "⏸️ Paused"
+        embed = discord.Embed(
+            title="🔄 Auto-Reset Toggled",
+            description=(
+                f"{Theme.SEP}\n\n"
+                f"**Scrim:** `{scrim_name}`\n"
+                f"**Auto-Reset:** {status}\n\n"
+                f"📝 Settings saved.\n\n{Theme.SEP}"
+            ),
+            color=Theme.SUCCESS if enable else Theme.WARNING,
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+        print(f"🔄 [{scrim_name}] Auto-reset set to {enable} by {interaction.user}", flush=True)
 
     @toggle_scrim_reset.autocomplete("name")
     async def toggle_scrim_reset_autocomplete(
         self, interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[str]]:
-        scrims = load_scrims()
+        from models import scrim as scrim_model
+
+        all_scrims = scrim_model.get_all_scrims()
         return [
-            app_commands.Choice(name=s["name"], value=s["name"])
-            for s in scrims
-            if current.upper() in s.get("name", "").upper()
+            app_commands.Choice(name=f"{s['scrim_id']} — {s['name']}", value=s["scrim_id"])
+            for s in all_scrims
+            if current.upper() in s.get("scrim_id", "").upper()
+            or current.lower() in s.get("name", "").lower()
         ][:25]
 
 

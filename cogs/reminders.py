@@ -1,6 +1,14 @@
 """
 Mack Bot — Reminders Cog
-Handles match reminders, cancel/reschedule buttons, auto-lock, and slot list publishing.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Automated match scheduling and pre-match coordination.
+
+Responsible for:
+    • Match Reminders       —  Pinging team owners X minutes before a match
+    • Roster Locking        —  Disabling cancel/reschedule buttons before start
+    • Slot Publishing       —  Auto-publishing final team rosters (Slot Lists)
+    • Player Coordination   —  Updating group status visually based on time
 """
 
 import datetime

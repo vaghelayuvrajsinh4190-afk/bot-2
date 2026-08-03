@@ -1,7 +1,17 @@
 """
 Mack Bot — Updater Utility
-Centralized async utility to handle Discord message updates for registration and rosters.
-Includes caching to prevent rate limits and duplicate edits.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Centralized asynchronous dispatcher for Discord message updates.
+
+Handles live UI updates for the Registration Board and Group Rosters.
+Includes built-in debouncing and payload hashing to prevent Discord
+API rate limits and redundant identical edits.
+
+Key Functions:
+    queue_roster_update              —  Throttle group roster edits
+    queue_registration_board_update  —  Throttle reg-board edits
+    flush_updates                    —  Force-process pending queue
 """
 
 import asyncio
@@ -109,33 +119,34 @@ async def update_registration_board(guild: discord.Guild, event_id: str):
     tier = parts[0] if len(parts) > 1 else ""
     suffix = f"_{tier}" if tier else ""
 
-    reg_channel_id = await asyncio.to_thread(get_channel_config, f"register{suffix}")
-    if not reg_channel_id:
-        # Fallback to general register channel
-        reg_channel_id = await asyncio.to_thread(get_channel_config, "register")
-        if not reg_channel_id:
-            return
-
-    channel = guild.get_channel(reg_channel_id)
-    if not channel:
-        return
-
     all_groups = await asyncio.to_thread(group_model.get_all_groups, event_id)
     embed = build_registration_board_embed(all_groups)
     
-    # Check permanent board first
-    slot_msg_id = await asyncio.to_thread(get_config, f"slot_message_id{suffix}")
-    if not slot_msg_id and suffix:
-        slot_msg_id = await asyncio.to_thread(get_config, "slot_message_id")
-        
-    if slot_msg_id:
-        await safe_edit_message(channel, slot_msg_id, embed, fallback_send=False)
-        return
+    # 1. Update permanent board
+    reg_channel_id = await asyncio.to_thread(get_channel_config, f"register{suffix}")
+    if not reg_channel_id:
+        reg_channel_id = await asyncio.to_thread(get_channel_config, "register")
+    
+    if reg_channel_id:
+        channel = guild.get_channel(reg_channel_id)
+        if channel:
+            slot_msg_id = await asyncio.to_thread(get_config, f"slot_message_id{suffix}")
+            if not slot_msg_id and suffix:
+                slot_msg_id = await asyncio.to_thread(get_config, "slot_message_id")
+            if slot_msg_id:
+                await safe_edit_message(channel, slot_msg_id, embed, fallback_send=False)
 
-    # Check event-specific board (fallback)
-    avail_msg_id = await asyncio.to_thread(get_config, f"slot_availability_msg_{event_id}")
-    if avail_msg_id:
-        await safe_edit_message(channel, avail_msg_id, embed, fallback_send=False)
+    # 2. Update event-specific auto-deployed board
+    auto_reg_channel_id = await asyncio.to_thread(get_config, f"category_reg_channel_{event_id}")
+    if auto_reg_channel_id:
+        auto_channel = guild.get_channel(auto_reg_channel_id)
+        if auto_channel:
+            avail_msg_id = await asyncio.to_thread(get_config, f"category_reg_msg_{event_id}")
+            if not avail_msg_id:
+                avail_msg_id = await asyncio.to_thread(get_config, f"slot_availability_msg_{event_id}")
+            if avail_msg_id:
+                await safe_edit_message(auto_channel, avail_msg_id, embed, fallback_send=False)
+
 
 def generate_progress_bar(current_count: int, max_capacity: int, length: int = 10) -> str:
     """

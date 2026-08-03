@@ -1,6 +1,13 @@
 """
 Mack Bot — Announcements Cog
-Announce, DM broadcast, room credentials — carried over from the old bot.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Administrative broadcast tools for mass communication.
+
+Slash Commands:
+    /announce  —  Sends a fully customizable embedded announcement (interactive modal)
+    /dm        —  Direct messages a specific user as the bot
+    /idp       —  Broadcasts room credentials (ID & Pass) to a specific tier/group
 """
 
 import asyncio

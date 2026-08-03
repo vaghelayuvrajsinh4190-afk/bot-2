@@ -1,6 +1,19 @@
 """
-Mack Bot — Database Connection & Collections
-Handles MongoDB connection, collection references, and index creation.
+Mack Bot — Database Layer
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+MongoDB connection management, collection references, index creation,
+and data-migration utilities.
+
+Collections:
+    team_profiles   —  Persistent team profiles (30-day TTL)
+    groups          —  Daily group slot allocations
+    registrations   —  Daily team registration records
+    punishments     —  Bans, strikes, and disciplinary records
+    bot_config      —  Key-value bot settings store
+    match_results   —  Points and leaderboard data
+    scrims          —  Dynamic multi-scrim configurations
+    global_teams    —  Cross-tier team tracking and global statistics
 """
 
 from pymongo import MongoClient, ASCENDING, DESCENDING

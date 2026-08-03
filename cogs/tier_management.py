@@ -1,6 +1,12 @@
 """
 Mack Bot — Tier Management Cog
-Admin commands for promoting and demoting teams across tiers.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Cross-tier workflow automation for team promotions and demotions.
+
+Provides admin commands to manually promote or demote teams across
+scrim tiers based on leaderboard performance. Updates the global team
+registry and announces the movement in the configured channels.
 """
 
 import discord

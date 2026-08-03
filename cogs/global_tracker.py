@@ -1,6 +1,12 @@
 """
 Mack Bot — Global Tracker Cog
-Handles the cross-tier global leaderboard and team stats.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Cross-tier analytics and persistent global leaderboards.
+
+Tracks lifetime team statistics (points, kills, matches, wins, no-shows)
+across all scrim tiers. Aggregates data from daily match results into a
+master leaderboard to facilitate promotion and demotion workflows.
 """
 
 import discord

@@ -1,7 +1,19 @@
 """
 Mack Bot — Registration Model
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 CRUD operations for daily team registrations.
-Each registration links a team to a group for one day's event.
+
+Each registration links a team owner to a specific group and slot for a
+single day's event.  Supports per-scrim scoping, duplicate detection,
+and teammate-level conflict checking.
+
+Key Functions:
+    create_registration              —  Insert a new registration record
+    is_already_registered            —  Duplicate-entry prevention
+    is_teammate_registered           —  Cross-team conflict detection
+    get_group_registrations          —  Roster retrieval for a group
+    cancel_registration              —  Soft-delete with status tracking
 """
 
 import datetime

@@ -1,8 +1,14 @@
 """
 Mack Bot — Scrim Manager Cog
-Admin commands for creating, editing, deleting, duplicating,
-archiving, enabling, and disabling scrims.
-All commands use the /scrim group prefix.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Administrative controls for creating and managing independent scrim tiers.
+
+Slash Commands (/scrim):
+    create / duplicate  —  Provision new tournament tiers
+    settings / modules  —  Configure tier-specific behaviour
+    channels / list     —  Manage routing and inspect active tiers
+    archive / delete    —  Safely decommission old tiers
 """
 
 import discord

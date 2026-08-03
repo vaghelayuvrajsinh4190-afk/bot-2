@@ -1,8 +1,18 @@
 """
 Mack Bot — Scrim Model
-CRUD operations for dynamic scrim management.
-Each scrim is a fully independent tournament/league with its own
-schedule, groups, registrations, points, channels, and settings.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+CRUD operations and configuration management for the multi-scrim system.
+
+Each scrim document represents a fully independent tournament tier with its
+own schedule, groups, registrations, points, channels, and module toggles.
+
+Key Functions:
+    create_scrim / delete_scrim   —  Lifecycle management
+    get_scrim / get_all_scrims    —  Document retrieval
+    set_scrim_setting / module    —  Granular configuration
+    set_scrim_channel             —  Per-scrim channel overrides
+    is_group_started_or_finished  —  Time-based match validation
 """
 
 import datetime
