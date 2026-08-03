@@ -517,6 +517,7 @@ class ScrimManagerCog(commands.Cog):
         app_commands.Choice(name="⏰ reminder_lead_minutes", value="reminder_lead_minutes"),
         app_commands.Choice(name="📢 channel_mode", value="channel_mode"),
         app_commands.Choice(name="🌐 cross_tier_registration", value="cross_tier_registration"),
+        app_commands.Choice(name="🛠️ create_group_channels", value="create_group_channels"),
     ])
     async def scrim_settings(self, interaction: discord.Interaction, scrim_id: str, setting: str = None, value: str = None):
         scrim = scrim_model.get_scrim(scrim_id)
@@ -563,7 +564,7 @@ class ScrimManagerCog(commands.Cog):
                 return
 
 
-        if setting == "cross_tier_registration":
+        if setting in ("cross_tier_registration", "create_group_channels"):
             value = value.lower() in ("true", "1", "yes", "on")
 
         if setting == "access_role_id":
