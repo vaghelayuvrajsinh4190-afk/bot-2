@@ -240,7 +240,7 @@ def build_registration_board_embed(groups=None, event_name="Daily Scrims"):
             total_capacity += pub_cap
 
             # Circle-dot progress bar
-            dot_bar = Theme.circle_bar(pub_count, pub_cap, 10)
+            dot_bar = Theme.circle_bar(pub_count, pub_cap, 12)
 
             # IDP-based timing instead of start times
             m1 = g.get("match1", {})
@@ -264,8 +264,8 @@ def build_registration_board_embed(groups=None, event_name="Daily Scrims"):
 
             group_lines.append(
                 f"{status_emoji} **Group {grp_num} \u2014 {date_display}**\n"
-                f"⌚ **IDP:** M1: `{m1_idp}` | M2: `{m2_idp}`\n"
-                f"{dot_bar} {pub_count}/{pub_cap} filled"
+                f"🕒 **IDP:** M1: `{m1_idp}` | M2: `{m2_idp}`\n"
+                f"`{dot_bar}` {pub_count}/{pub_cap} filled\n"
             )
     else:
         total_capacity = 1  # Avoid division by zero
@@ -274,19 +274,34 @@ def build_registration_board_embed(groups=None, event_name="Daily Scrims"):
         groups_text = "\n".join(group_lines)
     else:
         groups_text = (
-            "`○○○○○○○○○○` 0/0 filled\n\n"
+            "`⚪⚪⚪⚪⚪⚪⚪⚪⚪⚪⚪⚪` 0/0 filled\n\n"
             "*No groups provisioned yet. Check back later!*"
         )
 
-    description = groups_text
+    instructions = (
+        "Welcome to the official registration system for the upcoming qualifiers. "
+        "Please read the instructions carefully before claiming your slot.\n\n"
+        "**📝 How to Register:**\n"
+        "**1.** Click the 📥 **Register Team** button below.\n"
+        "**2.** Fill out the form with your Team Name and IGL details.\n"
+        "**3.** Make sure your in-game Character IDs are ready.\n"
+        "**4.** Submit to instantly lock in your slot.\n\n"
+        "**⚠️ Important Rules:**\n"
+        "• Slots are strictly **first-come, first-served**.\n"
+        "• Spamming the form will result in a server ban.\n"
+        "• Roster changes are not allowed after submission.\n\n"
+        "**📊 Current Slot Status:**\n"
+    )
+
+    description = instructions + groups_text
 
     embed = discord.Embed(
-        title="REGISTRATION PORTAL — Slot availability",
+        title="🏆 REGISTRATION PORTAL",
         description=description,
-        color=Theme.REGISTRATION,
+        color=discord.Color.from_rgb(230, 81, 0),
         timestamp=datetime.datetime.utcnow()
     )
-    embed.set_footer(text="Auto-updates on every registration event")
+    embed.set_footer(text="Secure your slot now")
     return embed
 
 def build_registration_receipt_embed(team_name, group_id, players,
