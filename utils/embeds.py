@@ -281,12 +281,12 @@ def build_registration_board_embed(groups=None, event_name="Daily Scrims"):
     description = groups_text
 
     embed = discord.Embed(
-        title="\U0001f3c6 REGISTRATION PORTAL",
+        title="REGISTRATION PORTAL — Slot availability",
         description=description,
         color=Theme.REGISTRATION,
         timestamp=datetime.datetime.utcnow()
     )
-    embed.set_footer(text="Secure your slot now")
+    embed.set_footer(text="Auto-updates on every registration event")
     return embed
 
 def build_registration_receipt_embed(team_name, group_id, players,

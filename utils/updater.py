@@ -177,7 +177,7 @@ async def update_registration_embed(channel: discord.TextChannel, message_id: in
         
         # 4. Create the new embed
         updated_embed = discord.Embed(
-            title="🏆 Registration Board",
+            title="REGISTRATION PORTAL — Slot availability",
             description=description,
             color=discord.Color.green()
         )
