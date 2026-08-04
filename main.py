@@ -95,6 +95,7 @@ class MackBot(commands.Bot):
             "cogs.scrim_manager",
             "cogs.global_tracker",
             "cogs.tier_management",
+            "cogs.scrim_config_panel",
         ]
 
         for cog in cog_list:
